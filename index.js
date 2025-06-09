@@ -15,16 +15,31 @@ if (!global.EventEmitter) {
 }
 
 // Import ekranów
+import * as Notifications from 'expo-notifications';
 import AddLiqueurScreen from './screens/AddLiqueurScreen';
 import AddStageScreen from './screens/AddStageScreen';
 import EditIngredients from './screens/EditIngredients'; // <- nowy ekran
 import EditLiqueurScreen from './screens/EditLiqueur';
+import EditStages from './screens/EditStages';
 import HomeScreen from './screens/HomeScreen';
 import LiqueurDetails from './screens/LiqueurDetails';
+import LoadingScreen from './screens/LoadingScreen';
 import LoginScreen from './screens/LoginScreen';
+import ProfileScreen from './screens/ProfileScreen';
 import StageListScreen from './screens/StageListScreen';
 
+
 const Stack = createNativeStackNavigator();
+
+// Ustaw domyślny sposób pokazywania notyfikacji
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
 
 function App() {
   return (
@@ -70,6 +85,10 @@ function App() {
           component={EditIngredients}
           options={{ title: '',headerShown: false   }}
         />
+        <Stack.Screen name="ProfileScreen" component={ProfileScreen} options={{title:'',headerShown: false    }}/>
+        <Stack.Screen name="LoadingScreen" component={LoadingScreen} options={{ headerShown: false }} />
+    <Stack.Screen name="EditStages" component={EditStages} options={{ headerShown: false }} />
+
       </Stack.Navigator>
     </NavigationContainer>
   );

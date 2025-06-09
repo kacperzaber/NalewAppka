@@ -1,30 +1,84 @@
 import { useEffect, useState } from 'react';
 import {
-    Alert,
-    FlatList,
-    KeyboardAvoidingView,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+
+// --- Nowy komponent dropdown zamiast Picker ---
+function EtapDropdown({ etapy, selectedEtapId, onSelect }) {
+  const [modalVisible, setModalVisible] = useState(false);
+  const selectedEtap = etapy.find((e) => e.id === selectedEtapId);
+
+  return (
+    <>
+      <TouchableOpacity
+        style={styles.dropdownButton}
+        onPress={() => setModalVisible(true)}
+      >
+        <Text style={styles.dropdownButtonText}>
+          {selectedEtap ? selectedEtap.note : 'Wybierz etap...'}
+        </Text>
+      </TouchableOpacity>
+
+      <Modal
+        visible={modalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPressOut={() => setModalVisible(false)}
+        >
+          <View style={styles.modalContent}>
+            <FlatList
+              data={etapy}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.modalItem}
+                  onPress={() => {
+                    onSelect(item.id);
+                    setModalVisible(false);
+                  }}
+                >
+                  <Text style={styles.modalItemText}>{item.note}</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
+}
 
 export default function EditIngredients({ route, navigation }) {
   const { liqueur } = route.params;
   const [ingredients, setIngredients] = useState([]);
+  const [etapy, setEtapy] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
+  const [etapId, setEtapId] = useState(''); // pusty string zamiast null
   const [editingId, setEditingId] = useState(null);
 
   useEffect(() => {
     fetchIngredients();
+    fetchEtapy();
   }, []);
 
   async function fetchIngredients() {
@@ -43,6 +97,20 @@ export default function EditIngredients({ route, navigation }) {
     setLoading(false);
   }
 
+  async function fetchEtapy() {
+    const { data, error } = await supabase
+      .from('etapy')
+      .select('*')
+      .eq('nalewka_id', liqueur.id)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      Alert.alert('Błąd pobierania etapów:', error.message);
+    } else {
+      setEtapy(data);
+    }
+  }
+
   async function addOrUpdateIngredient() {
     if (name.trim() === '' || amount.trim() === '') {
       Alert.alert('Proszę podać nazwę i ilość składnika');
@@ -52,16 +120,14 @@ export default function EditIngredients({ route, navigation }) {
     if (editingId) {
       const { error } = await supabase
         .from('skladniki')
-        .update({ name: name.trim(), amount: amount.trim() })
+        .update({ name: name.trim(), amount: amount.trim(), etap_id: etapId || null })
         .eq('id', editingId);
 
       if (error) {
         Alert.alert('Błąd aktualizacji składnika:', error.message);
       } else {
         Alert.alert('Składnik zaktualizowany');
-        setEditingId(null);
-        setName('');
-        setAmount('');
+        cancelEditing();
         fetchIngredients();
       }
     } else {
@@ -70,6 +136,7 @@ export default function EditIngredients({ route, navigation }) {
           nalewka_id: liqueur.id,
           name: name.trim(),
           amount: amount.trim(),
+          etap_id: etapId || null,
         },
       ]);
 
@@ -77,71 +144,72 @@ export default function EditIngredients({ route, navigation }) {
         Alert.alert('Błąd dodawania składnika:', error.message);
       } else {
         Alert.alert('Składnik dodany');
-        setName('');
-        setAmount('');
+        cancelEditing();
         fetchIngredients();
       }
     }
   }
 
   async function deleteIngredient(id) {
-    Alert.alert(
-      'Usuń składnik',
-      'Czy na pewno chcesz usunąć ten składnik?',
-      [
-        { text: 'Anuluj', style: 'cancel' },
-        {
-          text: 'Usuń',
-          style: 'destructive',
-          onPress: async () => {
-            const { error } = await supabase
-              .from('skladniki')
-              .delete()
-              .eq('id', id);
-            if (error) {
-              Alert.alert('Błąd usuwania składnika:', error.message);
-            } else {
-              fetchIngredients();
-            }
-          },
+    Alert.alert('Usuń składnik', 'Czy na pewno chcesz usunąć ten składnik?', [
+      { text: 'Anuluj', style: 'cancel' },
+      {
+        text: 'Usuń',
+        style: 'destructive',
+        onPress: async () => {
+          const { error } = await supabase
+            .from('skladniki')
+            .delete()
+            .eq('id', id);
+          if (error) {
+            Alert.alert('Błąd usuwania składnika:', error.message);
+          } else {
+            fetchIngredients();
+          }
         },
-      ]
-    );
+      },
+    ]);
   }
 
   const startEditing = (ingredient) => {
     setEditingId(ingredient.id);
     setName(ingredient.name);
     setAmount(ingredient.amount);
+    setEtapId(ingredient.etap_id || '');
   };
 
   const cancelEditing = () => {
     setEditingId(null);
     setName('');
     setAmount('');
+    setEtapId('');
   };
 
-  const renderIngredient = ({ item }) => (
-    <View style={styles.ingredientCard}>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.ingredientText}>
-          {item.name} — {item.amount}
-        </Text>
+  const renderIngredient = ({ item }) => {
+    const etap = etapy.find((e) => e.id === item.etap_id);
+    return (
+      <View style={styles.ingredientCard}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.ingredientText}>
+            {item.name} — {item.amount}
+            {etap ? ` (Etap: ${etap.note})` : ''}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={styles.editButton}
+          onPress={() => startEditing(item)}
+        >
+          <Text style={styles.editButtonText}>Edytuj</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={() => deleteIngredient(item.id)}
+        >
+          <Text style={styles.deleteButtonText}>Usuń</Text>
+        </TouchableOpacity>
       </View>
-      <TouchableOpacity
-        style={styles.editButton}
-        onPress={() => startEditing(item)}
-      >
-        <Text style={styles.editButtonText}>Edytuj</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.deleteButton}
-        onPress={() => deleteIngredient(item.id)}
-      >
-        <Text style={styles.deleteButtonText}>Usuń</Text>
-      </TouchableOpacity>
-    </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safeContainer}>
@@ -153,7 +221,7 @@ export default function EditIngredients({ route, navigation }) {
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={styles.title}>Edytuj składniki: {liqueur.name}</Text>
+          <Text style={styles.title}>Zarządzaj składnikami: {liqueur.name}</Text>
 
           <View style={styles.form}>
             <TextInput
@@ -170,6 +238,15 @@ export default function EditIngredients({ route, navigation }) {
               value={amount}
               onChangeText={setAmount}
             />
+
+            <Text style={styles.pickerLabel}>Wybierz etap:</Text>
+            <View style={styles.pickerContainer}>
+              <EtapDropdown
+                etapy={etapy}
+                selectedEtapId={etapId}
+                onSelect={setEtapId}
+              />
+            </View>
 
             <TouchableOpacity
               style={styles.addButton}
@@ -202,7 +279,7 @@ export default function EditIngredients({ route, navigation }) {
               keyExtractor={(item) => item.id}
               renderItem={renderIngredient}
               style={{ marginTop: 10 }}
-              scrollEnabled={false}  // tutaj jest ważne!
+              scrollEnabled={false}
             />
           )}
         </ScrollView>
@@ -240,6 +317,53 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontSize: 16,
   },
+  pickerLabel: {
+    color: '#bba68f',
+    fontWeight: '600',
+    marginBottom: 6,
+    fontSize: 14,
+  },
+  pickerContainer: {
+    backgroundColor: '#4a3c2f',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#a97458',
+    overflow: 'hidden',
+    marginBottom: 12,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+
+  dropdownButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  dropdownButtonText: {
+    color: '#f5e6c4',
+    fontSize: 16,
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  modalContent: {
+    backgroundColor: '#2e1d14',
+    borderRadius: 10,
+    maxHeight: '50%',
+  },
+  modalItem: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#4a3c2f',
+  },
+  modalItemText: {
+    color: '#f5e6c4',
+    fontSize: 16,
+  },
+
   addButton: {
     backgroundColor: '#a97458',
     paddingVertical: 12,

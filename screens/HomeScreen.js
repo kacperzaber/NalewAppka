@@ -1,24 +1,28 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
 import {
-  Dimensions,
+  Alert,
   FlatList,
   Image,
   ImageBackground,
   Modal,
+  PixelRatio,
+  Platform,
   Pressable,
+  SafeAreaView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 
-// Ikonki przypisane do nazw nalewek
 const getIconSourceByName = (name) => {
   if (!name) return require('../assets/liqueur-icons/default.png');
-
   const lower = name.toLowerCase();
   if (lower.includes('cytryn')) return require('../assets/liqueur-icons/lemon.png');
   if (lower.includes('wiśni') || lower.includes('wisni')) return require('../assets/liqueur-icons/cherry.png');
@@ -36,217 +40,350 @@ const getIconSourceByName = (name) => {
   if (lower.includes('deren')) return require('../assets/liqueur-icons/deren.png');
   return require('../assets/liqueur-icons/default.png');
 };
+function normalize(size, screenWidth) {
+  const scale = screenWidth / 375;
+  const newSize = size * scale;
+  return Math.round(PixelRatio.roundToNearestPixel(newSize));
+}
 
-const windowWidth = Dimensions.get('window').width;
-const numColumns = 2;
-const tileMargin = 12;
-const containerPadding = 40;
-const tileSize = (windowWidth - tileMargin * (numColumns + 1) - containerPadding) / numColumns;
+export default function HomeScreen() {
+  // wszystkie hooki – bez żadnych warunków przed nimi
 
-export default function HomeScreen({ navigation }) {
+  const { width } = useWindowDimensions();
+  const styles = createStyles(width);
+  const norm = (sz) => normalize(sz, width);
+  
+  const { width: windowWidth } = useWindowDimensions();
+  const [ready, setReady] = useState(false);
+  const navigation = useNavigation();
+  const route = useRoute();
+  const alertShown = useRef(false);
+  const [todayModalVisible, setTodayModalVisible] = useState(false);
+  const [todaysStagesList, setTodaysStagesList] = useState([]);
   const [liqueurs, setLiqueurs] = useState([]);
-  const [stagesByLiqueur, setStagesByLiqueur] = useState({}); // { [nalewka_id]: { date, note } }
+  const [archivedLiqueurs, setArchivedLiqueurs] = useState([]);
+  const [nextStagesByLiqueur, setNextStagesByLiqueur] = useState({});
   const [modalVisible, setModalVisible] = useState(false);
   const [modalNote, setModalNote] = useState('');
-  const userId = '394858b4-3b18-429c-8595-9f60cbde50d8';
+  const [userId, setUserId] = useState(null);
+  const [activeTab, setActiveTab] = useState('active');
+  const [modalDate, setModalDate] = useState('');
 
-  // Ustawienie przycisku wyloguj w headerze - poprawione pod iPhone 15
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={() => navigation.replace('Login')}
-          style={styles.headerLogoutButton}
-          hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }} // większy hitSlop dla łatwiejszego kliknięcia
-          accessibilityLabel="Wyloguj"
-          accessibilityRole="button"
-        >
-          <Text style={styles.headerLogoutText}>Wyloguj</Text>
-        </TouchableOpacity>
-      ),
-      headerStyle: {
-        backgroundColor: '#2e1d14',
-        shadowColor: 'transparent',
-        elevation: 0,
-      },
-      headerTitleStyle: {
-        color: '#f5e6c4',
-        fontWeight: '700',
-        fontSize: 20,
-      },
-      headerTintColor: '#f5e6c4',
-    });
-  }, [navigation]);
-
+  // pobierz użytkownika
   useEffect(() => {
+    const fetchUser = async () => {
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error) console.log('Błąd pobierania użytkownika:', error);
+      else if (user) setUserId(user.id);
+    };
+    fetchUser();
+  }, []);
+
+  // odśwież dane po userId
+  useEffect(() => {
+    if (!userId) return;
     fetchAllData();
-    const unsubscribe = navigation.addListener('focus', fetchAllData);
-    return unsubscribe;
-  }, [navigation]);
+    fetchArchivedData();
+  }, [userId]);
 
-  // Pobieramy nalewki i etapy (etapy przyszłe)
-  const fetchAllData = async () => {
+  // odśwież przy zmianie zakładki
+  useFocusEffect(
+    useCallback(() => {
+      if (!userId) return;
+      activeTab === 'archive' ? fetchArchivedData() : fetchAllData();
+      if (route.params?.returnToModal) {
+        setTodayModalVisible(true);
+        navigation.setParams({ returnToModal: undefined });
+      }
+    }, [userId, activeTab, route.params?.returnToModal])
+  );
+
+  // normalize + kafelki
+  const numColumns = windowWidth < 360 ? 1 : 2;
+  const tileMargin = 12;
+  const containerPadding = 40;
+  const tileSize = (windowWidth - tileMargin * (numColumns + 1) - containerPadding) / numColumns;
+
+  const titlesByTab = {
+    active: 'Aktywne nalewki',
+    new: 'Nowe nalewki',
+    shared: 'Udostępnione',
+    archive: 'Archiwalne nalewki',
+  };
+
+  const skipTodaysStages = async () => {
     try {
-      // Pobierz nalewki
-      const { data: liqueursData, error: liqueursError } = await supabase
-        .from('nalewki')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (liqueursError) {
-        console.log('Błąd pobierania nalewek:', liqueursError);
-        setLiqueurs([]);
-        setStagesByLiqueur({});
-        return;
-      }
-      setLiqueurs(liqueursData || []);
-
-      // Pobierz wszystkie etapy przyszłe (od dziś wzwyż)
-      const todayISO = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-
-      const { data: stagesData, error: stagesError } = await supabase
+      const etapIds = todaysStagesList.map(s => s.etap_id);
+      if (!etapIds.length) return;
+      const { error } = await supabase
         .from('etapy')
-        .select('*')
-        .in('nalewka_id', liqueursData.map(l => l.id))
-        .gte('date', todayISO)
-        .order('date', { ascending: true });
-
-      if (stagesError) {
-        console.log('Błąd pobierania etapów:', stagesError);
-        setStagesByLiqueur({});
+        .update({ skip_notif: true })
+        .in('id', etapIds);
+      if (error) {
+        console.error('Błąd skip_notif:', error);
         return;
       }
-
-      // Dla każdej nalewki wyciągnij pierwszy najbliższy etap
-      const nextStages = {};
-      for (const stage of stagesData) {
-        if (!nextStages[stage.nalewka_id]) {
-          nextStages[stage.nalewka_id] = { date: stage.date, note: stage.note };
-        }
-      }
-      setStagesByLiqueur(nextStages);
-    } catch (err) {
-      console.log('Błąd podczas fetchAllData:', err);
-      setLiqueurs([]);
-      setStagesByLiqueur({});
+      setTodayModalVisible(false);
+      alertShown.current = false;
+      fetchAllData();
+    } catch (e) {
+      console.error(e);
     }
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return '';
-    const date = new Date(dateString);
-    if (isNaN(date)) return '';
-    return date.toLocaleDateString('pl-PL', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    });
+  const fetchAllData = async () => {
+    try {
+      const statuses = ['active','new','waiting'];
+      const { data: liqueursData, error: lError } = await supabase
+        .from('nalewki')
+        .select('*')
+        .eq('user_id', userId)
+        .in('status', statuses)
+        .order('created_at',{ ascending:false });
+      if (lError) throw lError;
+      setLiqueurs(liqueursData||[]);
+
+      // przygotuj mapę dat
+      const createdMap = {};
+      liqueursData.forEach(l => {
+        createdMap[l.id] = l.created_at ? new Date(l.created_at) : null;
+      });
+
+      const { data: stagesData, error: sError } = await supabase
+        .from('etapy')
+        .select('nalewka_id,note,execute_after_days,id,is_done,skip_notif')
+        .or('skip_notif.eq.false,skip_notif.is.null');
+      if (sError) throw sError;
+
+      // dziś
+      const now = new Date();
+      now.setHours(0,0,0,0);
+      const todayStr = now.toISOString().slice(0,10);
+
+      const nextMap = {};
+      stagesData.forEach(stage => {
+        const start = createdMap[stage.nalewka_id];
+        if (!start) return;
+        const dt = new Date(start);
+        dt.setHours(0,0,0,0);
+        dt.setDate(dt.getDate() + (stage.execute_after_days||0));
+        if (dt < now) return;
+        const key = stage.nalewka_id;
+        const existing = nextMap[key];
+        if (!existing || dt < new Date(existing.date)) {
+          nextMap[key] = {
+            date: dt.toISOString().slice(0,10),
+            note: stage.note,
+            is_done: stage.is_done,
+            etap_id: stage.id,
+          };
+        }
+      });
+      setNextStagesByLiqueur(nextMap);
+
+      // modal dzisiaj
+      const todays = Object.entries(nextMap).filter(([_,st])=>st.date===todayStr);
+      if (todays.length && !alertShown.current) {
+        alertShown.current = true;
+        const list = todays.map(([id,st]) => {
+          const l = liqueursData.find(x=>x.id===+id);
+          return l ? {
+            name: l.name,
+            note: st.note||'Brak notatki',
+            etap_id: st.etap_id,
+            is_done: st.is_done||false,
+            nalewka_id: +id,
+          } : null;
+        }).filter(Boolean);
+        setTodaysStagesList(list);
+        setTodayModalVisible(true);
+      }
+    } catch (e) {
+      console.error(e);
+      setLiqueurs([]); setNextStagesByLiqueur({});
+    }
   };
 
-  const daysUntil = (dateString) => {
-    if (!dateString) return null;
-    const targetDate = new Date(dateString);
-    if (isNaN(targetDate)) return null;
-    const now = new Date();
-    const diffTime = targetDate - now;
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const fetchArchivedData = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('nalewki')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('status','archive')
+        .order('archive_date',{ascending:false});
+      if (error) throw error;
+      setArchivedLiqueurs(data||[]);
+    } catch (e) {
+      console.error(e);
+      setArchivedLiqueurs([]);
+    }
   };
 
-  const daysAgo = (dateString) => {
-    if (!dateString) return 0;
-    const createdDate = new Date(dateString);
-    if (isNaN(createdDate)) return 0;
-    const now = new Date();
-    const diffTime = now - createdDate;
-    return Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  const formatDate = ds => {
+    if (!ds) return '';
+    const d = new Date(ds);
+    return isNaN(d) ? '' : d.toLocaleDateString('pl-PL',{day:'numeric',month:'long',year:'numeric'});
+  };
+  const daysUntil = ds => {
+    const t = new Date(ds), n = new Date();
+    t.setHours(0,0,0,0); n.setHours(0,0,0,0);
+    return Math.round((t-n)/(1000*60*60*24));
+  };
+  const daysAgo = ds => {
+    const c = new Date(ds), n = new Date();
+    c.setHours(0,0,0,0); n.setHours(0,0,0,0);
+    return Math.floor((n-c)/(1000*60*60*24));
   };
 
-  // Pokazuje modal zamiast natywnego alertu
-  const showStageDetails = (note) => {
-    setModalNote(note || 'Brak dodatkowych informacji.');
-    setModalVisible(true);
+  const acceptShared = async id => {
+    await supabase.from('nalewki').update({status:'new'}).eq('id',id);
+    fetchAllData();
+  };
+  const rejectShared = id => {
+    Alert.alert('Usuń nalewkę','Na pewno?',[
+      { text:'Anuluj',style:'cancel' },
+      { text:'Usuń',style:'destructive',onPress:async()=>{
+        await supabase.from('skladniki').delete().eq('nalewka_id',id);
+        await supabase.from('etapy').delete().eq('nalewka_id',id);
+        await supabase.from('nalewki').delete().eq('id',id);
+        fetchAllData();
+      }}
+    ]);
+  };
+
+  const getFiltered = () => (
+    activeTab==='archive'
+      ? archivedLiqueurs
+      : liqueurs.filter(l =>
+          activeTab==='shared'
+            ? l.status==='waiting'
+            : l.status===activeTab
+        )
+  );
+  const countBy = st => liqueurs.filter(l=> st==='shared'?l.status==='waiting':l.status===st).length;
+
+  const tabs = [
+    {key:'active',icon:'flask-outline',color:'#2E7D32',count:countBy('active')},
+    {key:'new',icon:'time-outline',color:'#5C7AEA',count:countBy('new')},
+    {key:'shared',icon:'share-social-outline',color:'#F57C00',count:countBy('shared')},
+    {key:'archive',icon:'archive-outline',color:'#424242',count:archivedLiqueurs.length},
+  ];
+
+  const goToStage = (liqId) => {
+    const obj = liqueurs.find(l=>l.id===liqId);
+    if (!obj) return;
+    setTodayModalVisible(false);
+    navigation.navigate('LiqueurDetails',{liqueur:obj,returnToModal:true});
   };
 
   const renderItem = ({ item }) => {
     const icon = getIconSourceByName(item.name);
-    const nextStage = stagesByLiqueur[item.id];
-
-    let daysLeft = null;
-    if (nextStage && nextStage.date) {
-      daysLeft = daysUntil(nextStage.date);
-      if (daysLeft < 0) daysLeft = null;
-    }
-
-    return (
-      <View style={styles.itemWrapper}>
+    const next = nextStagesByLiqueur[item.id];
+    let daysLeft = next?.date ? daysUntil(next.date) : null;
+    if (daysLeft < 0) daysLeft = null;
+    const isShared = item.status==='waiting';
+    const isNew = item.status==='new';
+     return (
+      <View style={styles.itemWrapper(tileSize)}>
         <TouchableOpacity
-          onPress={() => navigation.navigate('LiqueurDetails', { liqueur: item })}
-          style={styles.itemTile}
+          onPress={()=>navigation.navigate('LiqueurDetails',{liqueur:item})}
+          style={[styles.itemTile, isShared&&styles.sharedTile, isNew&&styles.newTile]}
           activeOpacity={0.85}
         >
-          <Image source={icon} style={styles.liqueurIcon} resizeMode="contain" />
-          <Text style={styles.itemText} numberOfLines={2} ellipsizeMode="tail">
-            {item.name}
-          </Text>
+          <Image source={icon} style={styles.liqueurIcon} resizeMode="contain"/>
+          <Text style={styles.itemText} numberOfLines={2}>{item.name}</Text>
 
-          <View style={styles.dateInfoContainer}>
-            <View style={styles.dateRow}>
-              <Ionicons name="flag-outline" size={16} color="#bba68f" style={styles.icon} />
-              <Text style={styles.dateValue}>{formatDate(item.created_at)}</Text>
-            </View>
-            {item.rozlanie ? (
-              <View style={styles.dateRow}>
-                <Ionicons name="wine-outline" size={16} color="#bba68f" style={styles.icon} />
-                <Text style={styles.dateValue}>{formatDate(item.rozlanie)}</Text>
+          {isShared ? (
+            <>
+              <Text style={styles.sharedByText}>Udostępniona przez: {item.from_user}</Text>
+              <View style={styles.sharedButtonsContainer}>
+                <TouchableOpacity style={styles.acceptButton} onPress={()=>acceptShared(item.id)}>
+                  <Ionicons name="checkmark" size={16} color="#fff"/>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.rejectButton} onPress={()=>rejectShared(item.id)}>
+                  <Ionicons name="close" size={16} color="#fff"/>
+                </TouchableOpacity>
               </View>
-            ) : null}
-          </View>
+              <View style={styles.badgeShare}>
+                <Text style={styles.badgeTextShare}>Udostępniona</Text>
+              </View>
+            </>
+          ) : isNew ? (
+            <>
+              <View style={styles.dateInfoContainer}>
+                <Text style={styles.newInfoText}>Nalewka w trybie edycji — brak daty rozpoczęcia</Text>
+              </View>
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>Szkic</Text>
+              </View>
+            </>
+          ) : (
+            <>
+              <View style={styles.dateInfoContainer}>
+                <View style={styles.dateRow}>
+                  <Ionicons name="flag-outline" size={16} color="#bba68f" style={styles.icon}/>
+                  <Text style={styles.dateValue}>{formatDate(item.created_at)}</Text>
+                </View>
+             {next && daysLeft !== null && daysLeft >= 0 && (
+  <View style={styles.nextStageRow}>
+    <Ionicons name="time-outline" size={16} color="#e1c699"/>
+    <Text style={styles.nextStageText}>
+      Etap: {daysLeft === 0 ? 'dzisiaj' : `za ${daysLeft} ${daysLeft === 1 ? 'dzień' : 'dni'}`}
+    </Text>
+    {next.note && (
+      <TouchableOpacity onPress={() => {
+        setModalDate(formatDate(next.date));
+        setModalNote(next.note);
+        setModalVisible(true);
+      }}>
+        <Ionicons name="information-circle-outline" size={20} color="#e1c699" style={{ marginLeft: 1 }}/>
+      </TouchableOpacity>
+    )}
+  </View>
+)}
 
-          {/* ETAP pod datami, nad "Start: ... dni temu" */}
-          {daysLeft !== null && (
-            <View style={styles.nextStageRow}>
-              <Ionicons
-                name="time-outline"
-                size={16}
-                color="#e1c699"
-                style={{ marginRight: 6 }}
-              />
-              <Text style={styles.nextStageText}>
-                Etap: {daysLeft === 0 ? 'dzisiaj' : `za ${daysLeft} ${daysLeft === 1 ? 'dzień' : 'dni'}`}
+              </View>
+              <Text style={styles.daysText}>
+                Start: {daysAgo(item.created_at)===0?'dzisiaj':`${daysAgo(item.created_at)} dni temu`}
               </Text>
-
-              <TouchableOpacity
-                onPress={() => showStageDetails(nextStage.note)}
-                style={styles.infoIconTouchable}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons
-                  name="information-circle-outline"
-                  size={20}
-                  color="#e1c699"
-                />
-              </TouchableOpacity>
-            </View>
+            </>
           )}
-
-          {/* Ilość dni od startu na dole kafelka */}
-          <Text style={styles.daysText}>
-            
-           Start: {daysAgo(item.created_at) === 0 
-  ? 'dzisiaj' 
-  : `${daysAgo(item.created_at)} ${daysAgo(item.created_at) === 1 ? 'dzień' : 'dni'} temu`}
-
-          </Text>
         </TouchableOpacity>
+        {!isShared && (
+          <TouchableOpacity
+            style={styles.editHint}
+            onPress={()=>navigation.navigate('EditLiqueur',{liqueur:item})}
+          >
+            <Ionicons name="pencil-outline" size={14} color="#a97458"/>
+            <Text style={styles.editHintText}>Edycja</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
 
+  const renderArchived = ({ item }) => {
+    const icon = getIconSourceByName(item.name);
+     return (
+      <View style={styles.itemWrapper(tileSize)}>
         <TouchableOpacity
-          style={styles.editHint}
-          onPress={() => navigation.navigate('EditLiqueur', { liqueur: item })}
-          activeOpacity={0.7}
+          onPress={()=>navigation.navigate('LiqueurDetails',{liqueur:item})}
+          style={[styles.itemTile, styles.archivedTile]}
+          activeOpacity={0.85}
         >
-          <Ionicons name="pencil-outline" size={14} color="#a97458" />
-          <Text style={styles.editHintText}>Edycja</Text>
+          <Image source={icon} style={styles.liqueurIcon} resizeMode="contain"/>
+          <Text style={styles.itemText} numberOfLines={2}>{item.name}</Text>
+          <View style={styles.dateInfoContainer}>
+            <Text style={styles.newInfoText}>Nalewka zarchiwizowana.</Text>
+            {item.comment && <Text style={styles.newInfoText}>{item.comment}</Text>}
+          </View>
+          <Text style={[styles.dateValue, styles.archiveDate]}>
+            {formatDate(item.archive_date)}
+          </Text>
+          <View style={styles.badgeArchive}>
+            <Text style={styles.badgeTextArchive}>Archiwalna</Text>
+          </View>
         </TouchableOpacity>
       </View>
     );
@@ -254,227 +391,360 @@ export default function HomeScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <View style={styles.customHeader}>
+        <Text style={styles.headerTitle}>{titlesByTab[activeTab]}</Text>
+        <TouchableOpacity onPress={()=>navigation.navigate('ProfileScreen')} style={styles.headerIcon}>
+          <Ionicons name="person-circle-outline" size={28} color="#f5e6c4"/>
+        </TouchableOpacity>
+      </View>
       <ImageBackground
-        source={require('../assets/backgrounds/home_background.jpg')}
+        source={require('../assets/backgrounds/home_background.png')}
         style={styles.container}
         imageStyle={styles.backgroundImage}
       >
-        <Text style={styles.title}>Twoje Nalewki</Text>
-
+        <View style={styles.tabsContainer}>
+          {tabs.map(tab=>{
+            const active = tab.key===activeTab;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={[
+                  styles.tabButton,
+                  { backgroundColor: active?tab.color:'#f5e6c4' },
+                  active&&styles.activeTabElevated,
+                ]}
+                onPress={()=>setActiveTab(tab.key)}
+              >
+                <Ionicons name={tab.icon} size={24} color={active?'#fff':tab.color}/>
+                {tab.count>0&&(
+                  <View style={styles.badgeCountContainer}>
+                    <Text style={styles.badgeCountText}>{tab.count}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
         <FlatList
-          data={liqueurs}
-          keyExtractor={(item) => item.id.toString()}
-          renderItem={renderItem}
+          data={activeTab==='archive'?archivedLiqueurs:getFiltered()}
+          keyExtractor={item=>item.id.toString()}
+          renderItem={activeTab==='archive'?renderArchived:renderItem}
           numColumns={numColumns}
           contentContainerStyle={styles.list}
           columnWrapperStyle={styles.row}
-          ListEmptyComponent={
-            <Text style={styles.noDataText}>Brak nalewek do wyświetlenia</Text>
-          }
-          style={{ flex: 1 }}
+         ListEmptyComponent={
+  <Text style={styles.noDataText}>
+    {activeTab === 'archive'
+      ? 'Brak archiwalnych nalewek'
+      : activeTab === 'shared'
+        ? 'Brak udostępnionych'
+        : activeTab === 'new'
+          ? 'Brak nalewek w trybie edycji'
+          : 'Brak nalewek do wyświetlenia'}
+  </Text>
+}
+
         />
-
-        <TouchableOpacity style={styles.addTile} onPress={() => navigation.navigate('AddLiqueur')}>
-          <Ionicons name="add" size={24} color="#f5e6c4" />
-          <Text style={styles.addText}>Dodaj</Text>
-        </TouchableOpacity>
-
-        {/* Modal ze szczegółami etapu */}
-        <Modal
-          animationType="fade"
-          transparent={true}
-          visible={modalVisible}
-          onRequestClose={() => setModalVisible(false)}
+        <TouchableOpacity
+          onPress={()=>navigation.navigate('AddLiqueur')}
+          style={styles.addFloatingButton}
         >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <Text style={styles.modalTitle}>Szczegóły etapu</Text>
-              <Text style={styles.modalContent}>{modalNote}</Text>
+          <Ionicons name="add" size={28} color="#fff"/>
+        </TouchableOpacity>
+       <Modal
+  transparent
+  animationType="fade"
+  visible={modalVisible}
+  onRequestClose={() => setModalVisible(false)}
+>
+  <View style={styles.modalOverlay}>
+    <View style={styles.modalContainer}>
+      <Text style={styles.modalTitle}>Szczegóły etapu</Text>
+      {modalDate ? (
+        <Text style={[styles.modalDate, { color: '#3b2a1f', fontWeight: '600', marginBottom: 8 }]}>
+          {modalDate}
+        </Text>
+      ) : null}
+      <Text style={[styles.modalNote, { color: '#5a4a3c', fontSize: 16, marginBottom: 20 }]}>
+        {modalNote}
+      </Text>
 
-              <Pressable
-                onPress={() => setModalVisible(false)}
-                style={({ pressed }) => [
-                  styles.modalButton,
-                  pressed && { backgroundColor: '#a97458' },
+      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+        <Pressable
+          style={[styles.modalButton, { backgroundColor: '#8d6943' }]}
+          onPress={() => setModalVisible(false)}
+        >
+          <Text style={[styles.modalButtonText, { color: '#f5e6c4' }]}>Zamknij</Text>
+        </Pressable>
+      </View>
+    </View>
+  </View>
+</Modal>
+
+      </ImageBackground>
+      {/* ——— Modal “Etapy na dziś” ——— */}
+<Modal
+  transparent
+  animationType="fade"
+  visible={todayModalVisible}
+  onRequestClose={() => setTodayModalVisible(false)}
+>
+  <View style={styles.modalOverlay}>
+    <View style={styles.modalContainer}>
+      <Text style={styles.modalTitle}>Etapy na dziś</Text>
+
+      <View style={styles.modalContent}>
+        {todaysStagesList.map((item, index) => (
+          <Pressable
+            key={index}
+            onPress={() => goToStage(item.nalewka_id)}
+            style={({ pressed }) => [
+              styles.todayStageItem,
+              item.is_done && styles.todayStageDone,
+              pressed && styles.todayStagePressed,
+            ]}
+          >
+            <View style={styles.todayStageHeader}>
+              <Text
+                style={[
+                  styles.todayStageName,
+                  item.is_done && styles.todayStageNameDone,
                 ]}
               >
-                <Text style={styles.modalButtonText}>Zamknij</Text>
-              </Pressable>
+                {item.name}
+              </Text>
+              <Text
+                style={[
+                  styles.stageStatus,
+                  item.is_done
+                    ? styles.statusDone
+                    : styles.statusPending,
+                ]}
+              >
+                {item.is_done ? '✔️ Wykonane' : '⏳ Oczekuje'}
+              </Text>
             </View>
-          </View>
-        </Modal>
-      </ImageBackground>
-    </SafeAreaView>
+            {item.note ? (
+              <Text style={styles.todayStageNote}>📝 {item.note}</Text>
+            ) : null}
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={styles.modalActions}>
+        <Pressable
+          style={[styles.modalButton, styles.skipButton]}
+          onPress={skipTodaysStages}
+        >
+          <Text style={[styles.modalButtonText, styles.skipButtonText]}>
+            Pomiń
+          </Text>
+        </Pressable>
+        <Pressable
+          style={styles.modalButton}
+          onPress={() => setTodayModalVisible(false)}
+        >
+          <Text style={styles.modalButtonText}>Zamknij</Text>
+        </Pressable>
+      </View>
+    </View>
+  </View>
+</Modal>
+ </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#2e1d14',
+export const createStyles = (width) => {
+  const norm = (sz) => normalize(sz, width);
+
+  return StyleSheet.create({
+  safeArea:{flex: 1,
+        backgroundColor: '#2e1d14',
+        paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+      },
+  customHeader:{
+    height:56, flexDirection:'row', alignItems:'center', justifyContent:'space-between',
+    paddingHorizontal:20, backgroundColor:'#2e1d14', borderBottomWidth:1, borderBottomColor:'#3b2a1f',
+    shadowColor:'#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.2, shadowRadius:4, elevation:3,
   },
+  headerTitle:{ color:'#f5e6c4', fontSize:20, fontWeight:'700', fontFamily:'serif' },
+  headerIcon:{ padding:4 },
+
   container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 12,
+      flex: 1,
+      paddingHorizontal: norm(20),
+      backgroundColor: '#2e1d14',
+    },
+  backgroundImage:{ opacity:0.8, resizeMode:'cover' },
+
+  tabsContainer:{ flexDirection:'row', justifyContent:'space-around', marginBottom:12 },
+  tabButton:{
+    width:50, height:50, borderRadius:25, justifyContent:'center', alignItems:'center',
+    marginHorizontal:6, shadowColor:'#000', shadowOffset:{width:0,height:1}, shadowOpacity:0.1, shadowRadius:2, elevation:2, marginTop: 10,
   },
-  backgroundImage: {
-    opacity: 0.2,
+  activeTabElevated:{ shadowOffset:{width:0,height:3}, shadowOpacity:0.2, shadowRadius:4, elevation:5 },
+  badgeCountContainer:{
+    position:'absolute', bottom:-2, right:-2,
+    backgroundColor:'#2e1d14', borderRadius:8, minWidth:16, height:16,
+    justifyContent:'center', alignItems:'center', paddingHorizontal:2,
   },
-  title: {
-    fontSize: 30,
-    fontWeight: '700',
-    color: '#f5e6c4',
-    marginBottom: 10,
-    alignSelf: 'center',
+  badgeCountText:{ color:'#fff', fontSize:10, fontWeight:'600' },
+
+  list:{ paddingBottom:60 },
+  row:{ justifyContent:'space-between', marginBottom:14 },
+  noDataText:{ textAlign:'center', marginTop:40, fontSize:18, color:'#f5e6c4' },
+
+  itemWrapper: tileSize => ({ width:tileSize }),
+  itemTile:{
+    backgroundColor:'#8d6943', borderRadius:12, opacity:0.9,
+    paddingVertical:12,paddingHorizontal:12,alignItems:'center',
+    minHeight:220, position:'relative',
   },
-  list: {
-    paddingBottom: 20,
-  },
-  row: {
-    justifyContent: 'space-between',
-  },
-  itemWrapper: {
-    marginBottom: tileMargin,
-  },
-  itemTile: {
-    backgroundColor: '#462d16',
-    width: tileSize,
-    height: tileSize * 1.35,
-    borderRadius: 16,
-    padding: 14,
-    justifyContent: 'space-between',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  liqueurIcon: {
-    width: 64,
-    height: 64,
-    alignSelf: 'center',
-    marginBottom: 8,
-  },
-  itemText: {
-    color: '#f5e6c4',
-    fontWeight: '700',
-    fontSize: 16,
-    textAlign: 'center',
-    marginBottom: 6,
-  },
-  dateInfoContainer: {
-    marginBottom: 8,
-  },
-  dateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
-  icon: {
-    marginRight: 6,
-  },
-  dateValue: {
-    color: '#bba68f',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  nextStageRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  nextStageText: {
-    color: '#e1c699',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  infoIconTouchable: {
-    marginLeft: 6,
-  },
-  daysText: {
-    color: '#bba68f',
-    fontSize: 11,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  editHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-    justifyContent: 'center',
-  },
-  editHintText: {
-    marginLeft: 4,
-    color: '#a97458',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  addTile: {
-    marginTop: 10,
-    backgroundColor: '#a97458',
-    borderRadius: 12,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  addText: {
-    marginLeft: 8,
-    color: '#f5e6c4',
-    fontWeight: '700',
-    fontSize: 18,
-  },
-  noDataText: {
-    color: '#f5e6c4',
-    fontSize: 18,
-    textAlign: 'center',
-    marginTop: 20,
-  },
-  headerLogoutButton: {
-    marginRight: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-  },
-  headerLogoutText: {
-    color: '#a97458',
-    fontWeight: '600',
-    fontSize: 14,
-  },
+  sharedTile:{ backgroundColor:'#4FB0AE', opacity:0.7 },
+  newTile:{ backgroundColor:'#424242', opacity:0.7 },
+  archivedTile:{ backgroundColor:'#424242', opacity:0.8 },
+
+  liqueurIcon:{ width:70, height:70, marginBottom:10 },
+  itemText:{ color:'#f5e6c4', fontSize:16, fontWeight:'700', marginBottom:10, textAlign:'center' },
+
+  sharedByText:{ color:'#fff', fontSize:12, fontStyle:'italic', marginBottom:8, textAlign:'center' },
+  sharedButtonsContainer:{ flexDirection:'row', marginTop:12, justifyContent:'center' },
+  acceptButton:{ backgroundColor:'#2E7D32', padding:8, borderRadius:10, marginRight:10, elevation:4 },
+  rejectButton:{ backgroundColor:'#D32F2F', padding:8, borderRadius:10, elevation:4 },
+  badgeShare:{ position:'absolute', top:10, right:10, backgroundColor:'#2e1d14', padding:4, borderRadius:6 },
+  badgeTextShare:{ color:'#fff', fontSize:12, fontWeight:'bold' },
+ badgeArchive:{ position:'absolute', top:10, right:10, backgroundColor:'#2e1d14', padding:4, borderRadius:6 },
+  badgeTextArchive:{ color:'#fff', fontSize:12, fontWeight:'bold' },
+  dateInfoContainer:{ width:'100%', marginBottom:8 },
+  dateRow:{ flexDirection:'row', alignItems:'center', marginBottom:2 },
+  icon:{ marginRight:5 },
+  dateValue:{ color:'#bba68f', fontSize:12 },
+
+  nextStageRow:{ flexDirection:'row', alignItems:'center', gap:6, marginTop:4 },
+  nextStageText:{ fontSize:12, color:'#e1c699' },
+  daysText:{ color:'#e1c699', fontSize:12, position:'absolute', bottom:10, left:12},
+  
+  newInfoText:{ color:'#f5f1e0', fontSize:13, textAlign:'center', fontStyle:'italic', paddingHorizontal:6 },
+  badge:{ position:'absolute', top:10, right:10, backgroundColor:'#3B3B3B', padding:4, borderRadius:6 },
+  badgeText:{ color:'#fff', fontSize:12, fontWeight:'bold' },
+
+  editHint:{ flexDirection:'row', alignItems:'center', justifyContent:'center', marginTop:6 },
+  editHintText:{ marginLeft:4, color:'#a97458', fontSize:12, fontWeight:'600' },
+
+  // profesjonalny modal w odcieniach brązu
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    alignItems: 'center',
+    padding: 20,
   },
   modalContainer: {
-    backgroundColor: '#2e1d14',
-    borderRadius: 12,
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#b08968',   // jasny brąz
+    borderRadius: 16,
     padding: 20,
-    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 16,
+    elevation: 12,
   },
   modalTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#f5e6c4',
-    marginBottom: 12,
+    textAlign: 'center',
+    marginBottom: 16,
+    color: '#2e1d14',              // ciemny brąz kontrastujący
   },
   modalContent: {
-    fontSize: 16,
-    color: '#bba68f',
     marginBottom: 20,
-    textAlign: 'center',
+  },
+  todayStageItem: {
+    backgroundColor: '#f0ead6',    // jasny kremowy
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  todayStageDone: {
+    backgroundColor: '#e6d5b8',
+  },
+  todayStagePressed: {
+    opacity: 0.6,
+  },
+  todayStageHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  todayStageName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3b2a1f',             // ciemny brąz
+  },
+  todayStageNameDone: {
+    textDecorationLine: 'line-through',
+    color: '#7d6a58',
+  },
+  todayStageNote: {
+    fontSize: 14,
+    fontStyle: 'italic',
+    color: '#5a4a3c',
+  },
+  stageStatus: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  statusDone: {
+    color: '#2E7D32',             // zachowujemy zielone dla done
+  },
+  statusPending: {
+    color: '#D32F2F',             // czerwone dla pending
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
   },
   modalButton: {
-    backgroundColor: '#a97458',
     paddingVertical: 10,
-    paddingHorizontal: 30,
+    paddingHorizontal: 20,
     borderRadius: 8,
+    backgroundColor: '#8d6943',   // głęboki brąz
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  skipButton: {
+    backgroundColor: '#6c5847',
   },
   modalButtonText: {
-    color: '#f5e6c4',
-    fontWeight: '700',
     fontSize: 16,
+    fontWeight: '600',
+    color: '#f5e6c4',
   },
-});
+  skipButtonText: {
+    color: '#e1c699',
+  },
+  addFloatingButton: {
+  position: 'absolute',
+  bottom: 20,
+  right: 20,
+  backgroundColor: '#8d6943',
+  width: 60,
+  height: 60,
+  borderRadius: 30,
+  justifyContent: 'center',
+  alignItems: 'center',
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.3,
+  shadowRadius: 6,
+  elevation: 6,
+   },
+  });
+};

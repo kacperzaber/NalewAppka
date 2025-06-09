@@ -1,5 +1,5 @@
 import { useNavigation } from '@react-navigation/native';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Keyboard,
@@ -15,6 +15,27 @@ import { supabase } from '../lib/supabase';
 export default function AddLiqueurScreen() {
   const navigation = useNavigation();
   const [name, setName] = useState('');
+  const [userId, setUserId] = useState(null);
+
+  // Pobieramy aktualnego użytkownika po załadowaniu komponentu
+  useEffect(() => {
+    const fetchUser = async () => {
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
+
+      if (error) {
+        console.log('Błąd pobierania użytkownika:', error);
+        return;
+      }
+      if (user) {
+        setUserId(user.id);
+      }
+    };
+
+    fetchUser();
+  }, []);
 
   const onSave = async () => {
     Keyboard.dismiss();
@@ -25,13 +46,15 @@ export default function AddLiqueurScreen() {
       return;
     }
 
-    try {
-      // Ręcznie przypisany user_id (UUID z Twojej bazy)
-      const userId = '394858b4-3b18-429c-8595-9f60cbde50d8';
+    if (!userId) {
+      Alert.alert('Błąd', 'Nie można pobrać danych użytkownika. Spróbuj ponownie.');
+      return;
+    }
 
+    try {
       const { data, error: insertError } = await supabase
         .from('nalewki')
-        .insert({ name, user_id: userId })
+        .insert({ name, user_id: userId , status: 'new'})
         .select();
 
       if (insertError) {
@@ -61,9 +84,10 @@ export default function AddLiqueurScreen() {
           onChangeText={setName}
           returnKeyType="done"
           onSubmitEditing={onSave}
+          blurOnSubmit={false}
         />
 
-        <TouchableOpacity style={styles.button} onPress={onSave}>
+        <TouchableOpacity style={styles.button} onPress={onSave} activeOpacity={0.8}>
           <Text style={styles.buttonText}>Zapisz</Text>
         </TouchableOpacity>
       </View>

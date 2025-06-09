@@ -1,87 +1,176 @@
-import { Ionicons } from '@expo/vector-icons';
+// screens/EditLiqueur.js
 import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Notifications from 'expo-notifications';
 import { useEffect, useState } from 'react';
 import {
   Alert,
-  Button,
-  FlatList,
   Keyboard,
-  Modal,
+  PixelRatio,
   Platform,
   SafeAreaView,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
+
+function normalize(size, screenWidth) {
+  const scale = screenWidth / 375;
+  const newSize = size * scale;
+  return Math.round(PixelRatio.roundToNearestPixel(newSize));
+}
+
 export default function EditLiqueur({ route, navigation }) {
+  const { width } = useWindowDimensions();
+  const styles = createStyles(width);
+  const norm = (sz) => normalize(sz, width);
+
   const { liqueur } = route.params;
+  const parseDate = (ds) => {
+    if (!ds) return null;
+    const d = new Date(ds);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
   const [name, setName] = useState(liqueur.name);
-  const [date, setDate] = useState(new Date(liqueur.created_at));
-  const [showPicker, setShowPicker] = useState(false);
+  const [date, setDate] = useState(parseDate(liqueur.created_at));
+  const [pickDate, setPickDate] = useState(date || new Date());
+  const [editingDate, setEditingDate] = useState(false);
   const [loading, setLoading] = useState(false);
   const [stages, setStages] = useState([]);
-  const [stagesLoading, setStagesLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', fetchStages);
-    return unsubscribe;
-  }, [navigation]);
-
-  async function fetchStages() {
-    setStagesLoading(true);
-    const { data, error } = await supabase
+    supabase
       .from('etapy')
       .select('*')
       .eq('nalewka_id', liqueur.id)
-      .order('date', { ascending: true });
+      .then(({ data, error }) => !error && setStages(data));
+  }, []);
 
-    if (error) {
-      alert('Błąd pobierania etapów: ' + error.message);
+  const onDateChange = (e, d) => {
+    if (Platform.OS === 'ios') {
+      if (e.type === 'set') setPickDate(d);
+      else if (e.type === 'dismissed') cancelEdit();
     } else {
-      setStages(data);
+      if (e.type === 'set') setDate(d);
+      setEditingDate(false);
     }
-    setStagesLoading(false);
-  }
+  };
 
-  const onChange = (event, selectedDate) => {
-    if (Platform.OS !== 'ios') setShowPicker(false);
-    if (selectedDate) setDate(selectedDate);
+  const startEditDate = () => {
+    setPickDate(date || new Date());
+    setEditingDate(true);
+  };
+  const saveDate = () => {
+    setDate(pickDate);
+    setEditingDate(false);
+  };
+  const cancelEdit = () => {
+    setPickDate(date);
+    setEditingDate(false);
+  };
+
+  const requestPermission = async () => {
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') {
+      const { status: newStatus } = await Notifications.requestPermissionsAsync();
+      return newStatus === 'granted';
+    }
+    return true;
   };
 
   const onSave = async () => {
-    if (!name.trim()) {
-      alert('Nazwa nalewki nie może być pusta!');
-      return;
-    }
-
+    if (!name.trim()) return Alert.alert('Uwaga', 'Nazwa nie może być pusta');
     setLoading(true);
+
     const { error } = await supabase
       .from('nalewki')
-      .update({
-        name: name.trim(),
-        created_at: date.toISOString(),
-      })
+      .update({ name: name.trim(), created_at: date ? date.toISOString() : null })
       .eq('id', liqueur.id);
 
-    setLoading(false);
-
     if (error) {
-      alert('Błąd podczas zapisywania: ' + error.message);
-    } else {
-      navigation.goBack();
+      setLoading(false);
+      return Alert.alert('Błąd', error.message);
     }
+
+    if (date) {
+      const userId = (await supabase.auth.getUser()).data.user?.id;
+      const { data: userData } = await supabase
+        .from('users')
+        .select('notification_hours')
+        .eq('id', userId)
+        .single();
+
+      const notificationHour = userData?.notification_hours ?? '15:00';
+      const [hourStr = '0', minuteStr = '0'] = notificationHour.split(':');
+      const hour = parseInt(hourStr, 10);
+      const minute = parseInt(minuteStr, 10);
+      const now = Date.now();
+
+      const hasPermission = await requestPermission();
+      if (!hasPermission) {
+        console.warn('Brak uprawnień na powiadomienia');
+      }
+
+      for (const s of stages) {
+        const stageDate = new Date(date);
+        stageDate.setDate(stageDate.getDate() + (s.execute_after_days || 0));
+        stageDate.setHours(0, 0, 0, 0);
+
+        if (s.notification_id) {
+          try {
+            await Notifications.cancelScheduledNotificationAsync(s.notification_id);
+          } catch (err) {
+            console.warn(`Nie udało się anulować starego powiadomienia etapu ${s.id}`, err);
+          }
+        }
+
+        const { error: updateError } = await supabase
+          .from('etapy')
+          .update({ date: stageDate.toISOString() })
+          .eq('id', s.id);
+
+        if (updateError) continue;
+
+        const notifDate = new Date(stageDate);
+        notifDate.setHours(hour, minute, 0, 0);
+
+        if (hasPermission && notifDate.getTime() >= now) {
+          const notificationId = await Notifications.scheduleNotificationAsync({
+            content: {
+              title: 'Przypomnienie',
+              body: `Etap "${s.note}" zaplanowany na ${notifDate.toLocaleDateString('pl-PL')}`,
+              data: { stageId: s.id },
+            },
+            trigger: { type: 'date', date: notifDate },
+          });
+
+          await supabase.from('etapy').update({ notification_id: notificationId }).eq('id', s.id);
+        }
+      }
+    }
+
+    setLoading(false);
+    navigation.goBack();
   };
 
-  const deleteLiqueur = async () => {
+  const onDelete = () => {
     Alert.alert(
       'Usuń nalewkę',
-      'Czy na pewno chcesz usunąć tę nalewkę wraz z jej etapami?',
+      'Na pewno?',
       [
         { text: 'Anuluj', style: 'cancel' },
         {
@@ -89,21 +178,24 @@ export default function EditLiqueur({ route, navigation }) {
           style: 'destructive',
           onPress: async () => {
             try {
-              const { error: errorStages } = await supabase
-                .from('etapy')
-                .delete()
-                .eq('nalewka_id', liqueur.id);
-              if (errorStages) throw errorStages;
+              await Promise.all(
+                stages.map(async (s) => {
+                  if (s.notification_id) {
+                    try {
+                      await Notifications.cancelScheduledNotificationAsync(s.notification_id);
+                    } catch (err) {
+                      console.warn(`Nie udało się anulować powiadomienia etapu ${s.id}:`, err);
+                    }
+                  }
+                })
+              );
 
-              const { error: errorLiqueur } = await supabase
-                .from('nalewki')
-                .delete()
-                .eq('id', liqueur.id);
-              if (errorLiqueur) throw errorLiqueur;
-
+              await supabase.from('skladniki').delete().eq('nalewka_id', liqueur.id);
+              await supabase.from('etapy').delete().eq('nalewka_id', liqueur.id);
+              await supabase.from('nalewki').delete().eq('id', liqueur.id);
               navigation.goBack();
-            } catch (error) {
-              alert('Błąd usuwania nalewki: ' + error.message);
+            } catch (e) {
+              Alert.alert('Błąd', e.message);
             }
           },
         },
@@ -112,265 +204,115 @@ export default function EditLiqueur({ route, navigation }) {
     );
   };
 
-  const getDaysText = (stageDate) => {
-    const today = new Date();
-    // zeruj godziny by porównywać tylko daty
-    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const stageMidnight = new Date(stageDate.getFullYear(), stageDate.getMonth(), stageDate.getDate());
-
-    const diffTime = stageMidnight.getTime() - todayMidnight.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    if (diffDays < 0) {
-      const daysAgo = Math.abs(diffDays);
-      return `${daysAgo} ${daysAgo === 1 ? 'dzień' : 'dni'} temu`;
-    } else if (diffDays === 0) {
-      return 'Dzisiaj';
-    } else {
-      return `Pozostało ${diffDays} ${diffDays === 1 ? 'dzień' : 'dni'}`;
-    }
-  };
-
-  const renderStage = ({ item }) => {
-    const stageDate = new Date(item.date);
-
-    return (
-      <View style={styles.stageCard}>
-        <View style={styles.stageHeader}>
-          <Text style={styles.stageDate}>
-            {stageDate.toLocaleDateString('pl-PL', {
-              day: 'numeric',
-              month: 'long',
-              year: 'numeric',
-            })}
-          </Text>
-          <View style={styles.stageIcons}>
-            <TouchableOpacity
-              onPress={() => navigation.navigate('AddStage', { liqueur, stage: item })}
-            >
-              <Ionicons name="create-outline" size={20} color="#f5e6c4" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => {
-                Alert.alert('Usuń etap', 'Czy na pewno chcesz usunąć ten etap?', [
-                  { text: 'Anuluj', style: 'cancel' },
-                  {
-                    text: 'Usuń',
-                    style: 'destructive',
-                    onPress: async () => {
-                      const { error } = await supabase.from('etapy').delete().eq('id', item.id);
-                      if (error) {
-                        alert('Błąd usuwania etapu: ' + error.message);
-                      } else {
-                        fetchStages();
-                      }
-                    },
-                  },
-                ]);
-              }}
-              style={{ marginLeft: 12 }}
-            >
-              <Ionicons name="trash-outline" size={20} color="#f5e6c4" />
-            </TouchableOpacity>
-          </View>
-        </View>
-        <Text style={styles.stageNote}>{item.note}</Text>
-        <Text style={styles.stageDaysAgo}>{getDaysText(stageDate)}</Text>
-      </View>
-    );
-  };
-
   return (
-    <SafeAreaView style={styles.safeContainer}>
+    <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" />
-      <FlatList
-        data={stages}
-        keyExtractor={(item) => item.id.toString()}
-        renderItem={renderStage}
-        ListHeaderComponent={
-          <>
-            <Text style={styles.title}>Edycja nalewki</Text>
-
-            <View style={styles.infoBox}>
-              <Text style={styles.label}>Nazwa nalewki:</Text>
-              <TextInput
-                style={styles.textInput}
-                value={name}
-                onChangeText={setName}
-                placeholder="Wpisz nazwę nalewki"
-                placeholderTextColor="#bba68f"
-                maxLength={50}
-                returnKeyType="done"
-                onSubmitEditing={Keyboard.dismiss}
-              />
-            </View>
-
-            <View style={styles.infoBox}>
-              <Text style={styles.label}>Data rozpoczęcia:</Text>
-              <TouchableOpacity onPress={() => setShowPicker(true)} style={styles.dateButton}>
-                <Text style={styles.dateText}>
-                  {date.toLocaleDateString('pl-PL', {
-                    day: 'numeric',
-                    month: 'long',
-                    year: 'numeric',
-                  })}
+      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <Text style={styles.title}>Edycja nalewki</Text>
+        <View style={styles.section}>
+          <Text style={styles.label}>Nazwa:</Text>
+          <TextInput
+            style={styles.input}
+            value={name}
+            onChangeText={setName}
+            placeholder="Wpisz nazwę"
+            placeholderTextColor="#bba68f"
+            returnKeyType="done"
+            onSubmitEditing={Keyboard.dismiss}
+          />
+        </View>
+        <View style={styles.section}>
+          <Text style={styles.label}>Data startu:</Text>
+          {!editingDate ? (
+            date ? (
+              <TouchableOpacity style={styles.dateBtn} onPress={startEditDate}>
+                <Text style={styles.dateTxt}>
+                  {date.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  <Text style={styles.editHint}> (Edytuj)</Text>
                 </Text>
               </TouchableOpacity>
-            </View>
+            ) : (
+              <Text style={styles.noDate}>Brak daty</Text>
+            )
+          ) : (
+            <>
+              <DateTimePicker
+                value={pickDate}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                onChange={onDateChange}
+                style={styles.picker}
+              />
+              {Platform.OS === 'ios' && (
+                <View style={styles.rowBtn}>
+                  <TouchableOpacity style={styles.smallBtn} onPress={saveDate}>
+                    <Text style={styles.smallTxt}>Zapisz</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.smallBtn, styles.cancelBtn]} onPress={cancelEdit}>
+                    <Text style={styles.smallTxt}>Anuluj</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </>
+          )}
+        </View>
 
-            <Modal visible={showPicker} transparent={true} animationType="fade">
-              <TouchableWithoutFeedback onPress={() => setShowPicker(false)}>
-                <View style={styles.modalOverlay} />
-              </TouchableWithoutFeedback>
-              <View style={styles.modalContent}>
-                <DateTimePicker
-                  value={date}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={onChange}
-                  // Usunięto maximumDate, aby można było wybrać zarówno przeszłość, jak i przyszłość
-                  themeVariant="light"
-                />
-              </View>
-            </Modal>
+        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('EditIngredients', { liqueur })}>
+          <Text style={styles.actionTxt}>Edytuj składniki</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('EditStages', { liqueur })}>
+          <Text style={styles.actionTxt}>Zarządzaj etapami</Text>
+        </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={onSave}
-              style={[styles.saveButton, loading && { opacity: 0.6 }]}
-              disabled={loading}
-            >
-              <Text style={styles.saveButtonText}>{loading ? 'Zapisywanie...' : 'Zapisz zmiany'}</Text>
-            </TouchableOpacity>
-
-            <Text style={[styles.label, { marginTop: 30 }]}>Etapy nalewki:</Text>
-          </>
-        }
-        ListEmptyComponent={
-          <Text style={styles.stageNote}>
-            {stagesLoading ? 'Ładowanie etapów...' : 'Brak etapów.'}
-          </Text>
-        }
-        ListFooterComponent={
-          <>
-            <Button
-              title="Dodaj etap"
-              onPress={() => navigation.navigate('AddStage', { liqueur })}
-              color="#a97458"
-            />
-            <TouchableOpacity onPress={deleteLiqueur} style={styles.deleteLiqueurButton}>
-              <Text style={styles.deleteLiqueurButtonText}>Usuń nalewkę</Text>
-            </TouchableOpacity>
-          </>
-        }
-        contentContainerStyle={{ padding: 24, paddingBottom: 60 }}
-        keyboardShouldPersistTaps="handled"
-      />
+        <TouchableOpacity style={[styles.saveBtn, loading && styles.disabled]} onPress={onSave}>
+          <Text style={styles.saveTxt}>{loading ? 'Zapisywanie...' : 'Zapisz zmiany'}</Text>
+        </TouchableOpacity>
+      </ScrollView>
+      <TouchableOpacity style={styles.deleteBtn} onPress={onDelete}>
+        <Text style={styles.deleteTxt}>Usuń nalewkę</Text>
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safeContainer: {
-    flex: 1,
-    backgroundColor: '#2e1d14',
-  },
-  title: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#f5e6c4',
-    textAlign: 'center',
-    marginBottom: 30,
-  },
-  infoBox: {
-    marginBottom: 24,
-  },
-  label: {
-    color: '#bba68f',
-    fontSize: 16,
-    marginBottom: 6,
-    fontWeight: '600',
-  },
-  textInput: {
-    backgroundColor: '#5a4635',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#f5e6c4',
-  },
-  dateButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: '#5a4635',
-    borderRadius: 12,
-  },
-  dateText: {
-    color: '#f5e6c4',
-    fontSize: 18,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  saveButton: {
-    marginTop: 20,
-    backgroundColor: '#a97458',
-    paddingVertical: 16,
-    borderRadius: 14,
-    alignItems: 'center',
-  },
-  saveButtonText: {
-    color: '#2e1d14',
-    fontWeight: 'bold',
-    fontSize: 18,
-  },
-  stageCard: {
-    backgroundColor: '#4b3a2b',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-  },
-  stageHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  stageDate: {
-    color: '#f5e6c4',
-    fontWeight: '700',
-    fontSize: 18,
-  },
-  stageIcons: {
-    flexDirection: 'row',
-  },
-  stageNote: {
-    marginTop: 8,
-    fontSize: 16,
-    color: '#d9cba7',
-  },
-  stageDaysAgo: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#bba68f',
-    fontStyle: 'italic',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-  },
-  modalContent: {
-    backgroundColor: '#4b3a2b',
-    padding: 20,
-  },
-  deleteLiqueurButton: {
-    marginTop: 20,
-    paddingVertical: 14,
-    borderRadius: 14,
-    backgroundColor: '#8b2d2d',
-    alignItems: 'center',
-  },
-  deleteLiqueurButtonText: {
-    color: '#f5e6c4',
-    fontWeight: '700',
-    fontSize: 18,
-  },
-});
+export const createStyles = (width) => {
+  const norm = (sz) => normalize(sz, width);
+
+  return StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor: '#2e1d14',
+      paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+    },
+    scroll: { padding: 24, paddingBottom: 40 },
+    title: { fontSize: 28, fontWeight: '700', color: '#f5e6c4', textAlign: 'center', marginBottom: 32 },
+    section: { marginBottom: 24 },
+    label: { color: '#bba68f', fontSize: 16, marginBottom: 6, fontWeight: '600' },
+    input: { backgroundColor: '#5a4635', borderRadius: 12, padding: 12, fontSize: 18, color: '#f5e6c4' },
+    dateBtn: { padding: 14, backgroundColor: '#5a4635', borderRadius: 12, alignItems: 'center' },
+    dateTxt: { color: '#f5e6c4', fontSize: 18, fontWeight: '500' },
+    editHint: { color: '#bba68f', fontStyle: 'italic', fontSize: 14 },
+    noDate: { color: '#e1c699', fontSize: 18, textAlign: 'center' },
+    picker: { backgroundColor: '#5a4635', borderRadius: 12, overflow: 'hidden' },
+    rowBtn: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
+    smallBtn: { flex: 1, padding: 12, backgroundColor: '#8d6943', borderRadius: 8, alignItems: 'center' },
+    cancelBtn: { backgroundColor: '#6b4b3a', marginLeft: 8 },
+    smallTxt: { color: '#f5e6c4', fontWeight: '600' },
+    actionBtn: { backgroundColor: '#a97458', padding: 16, borderRadius: 14, alignItems: 'center', marginTop: 16 },
+    actionTxt: { color: '#2e1d14', fontWeight: '700', fontSize: 16 },
+    saveBtn: { backgroundColor: '#a97458', padding: 18, borderRadius: 14, alignItems: 'center', marginTop: 32 },
+    saveTxt: { color: '#2e1d14', fontWeight: '700', fontSize: 18 },
+    disabled: { opacity: 0.6 },
+    deleteBtn: {
+      position: 'absolute',
+      bottom: 20,
+      left: 20,
+      right: 20,
+      padding: 16,
+      borderRadius: 14,
+      backgroundColor: '#8b2d2d',
+      alignItems: 'center',
+    },
+    deleteTxt: { color: '#f5e6c4', fontWeight: '700', fontSize: 18 },
+  });
+};

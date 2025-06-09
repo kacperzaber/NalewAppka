@@ -1,10 +1,11 @@
 {
   "expo": {
-    "name": "NalewAppka",
-    "slug": "NalewAppka",
+    "name": "Piwniczka",
+    "slug": "Piwniczka",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./icon.png",
+    "type" : "module",
     "scheme": "nalewappka",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -49,8 +50,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "3b115776-9c1a-40e0-96d2-d319aec6027b"
+        "projectId": "cd6e560f-43b5-4a64-a68e-e48b757596d3"
       }
-    }
+    },
+    "owner": "zkacper"
   }
 }
