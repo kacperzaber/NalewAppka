@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, FlatList, StyleSheet, Text, View } from 'react-native';
+import { Button, FlatList, PixelRatio, StyleSheet, Text, View } from 'react-native';
 import { supabase } from '../lib/supabase';
 
 export default function StageListScreen({ route, navigation }) {
@@ -10,6 +10,12 @@ export default function StageListScreen({ route, navigation }) {
   useEffect(() => {
     fetchStages();
   }, []);
+
+  function normalize(size, screenWidth) {
+    const scale = screenWidth / 375;
+    const newSize = size * scale;
+    return Math.round(PixelRatio.roundToNearestPixel(newSize));
+  }
 
   async function fetchStages() {
     setLoading(true);
@@ -68,12 +74,16 @@ export default function StageListScreen({ route, navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 20,
-    backgroundColor: '#2e1d14',
-  },
+export const createStyles = (width) => {
+  const norm = (sz) => normalize(sz, width);
+
+  return StyleSheet.create({
+
+    container: {
+      flex: 1,
+      paddingHorizontal: norm(20),
+      backgroundColor: '#2e1d14',
+    },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
@@ -104,5 +114,6 @@ const styles = StyleSheet.create({
     color: '#f5e6c4',
     marginBottom: 10,
     fontSize: 16,
-  },
-});
+   },
+  });
+};

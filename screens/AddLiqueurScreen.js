@@ -54,7 +54,7 @@ export default function AddLiqueurScreen() {
     try {
       const { data, error: insertError } = await supabase
         .from('nalewki')
-        .insert({ name, user_id: userId , status: 'new'})
+        .insert({ name, user_id: userId , status: 'recipes'})
         .select();
 
       if (insertError) {

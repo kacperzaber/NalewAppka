@@ -40,6 +40,9 @@ function normalize(size, screenWidth) {
 export default function LiqueurDetails({ route }) {
 
   console.log('Jestem na 2 ekranie')
+
+  console.log('route', route)
+
   const navigation = useNavigation();
   const { width } = useWindowDimensions();
   const styles = createStyles(width);
@@ -213,15 +216,25 @@ const fetchUserPreferences = async () => {
   };
 
   // --- Wznów nalewkę z archiwum ---
-  const resumeLiqueur = () => {
-    Alert.alert(
-      'Wznów nalewkę',
-      'Czy na pewno chcesz wznowić tę nalewkę? Utworzy się nowy szkic z etapami i składnikami.',
-      [
-        { text: 'Anuluj', style: 'cancel' },
-        {
-          text: 'Wznów',
-          onPress: async () => {
+const resumeLiqueur = () => {
+  const isRecipe = currentLiqueur.status === 'recipes';
+
+  const title = isRecipe
+    ? 'Zastosuj przepis'
+    : 'Wznów nalewkę';
+  const message = isRecipe
+    ? 'Czy na pewno chcesz utworzyć nalewkę na podstawie tego przepisu? Powstanie szkic z etapami i składnikami.'
+    : 'Czy na pewno chcesz wznowić tę nalewkę? Utworzy się nowy szkic z etapami i składnikami.';
+  const confirmText = isRecipe ? 'Użyj przepisu' : 'Wznów';
+
+  Alert.alert(
+    title,
+    message,
+    [
+      { text: 'Anuluj', style: 'cancel' },
+      {
+        text: confirmText,
+        onPress: async () => {
             try {
               // 1) Utwórz nową nalewkę w statusie 'new', kopiując pola poza datami
               const { data: newLiqueur, error: newError } = await supabase
@@ -272,20 +285,27 @@ const fetchUserPreferences = async () => {
                 if (iError) throw iError || new Error('Błąd kopiowania składnika');
               }
 
-              Alert.alert('Gotowe', 'Nalewka została wznowiona jako szkic.');
-             navigation.replace('LiqueurDetails', { liqueur: newLiqueur });
+              Alert.alert(
+              isRecipe ? 'Przepis zastosowany' : 'Gotowe',
+              isRecipe
+                ? 'Na podstawie tego przepisu utworzono nową nalewkę w trybie edycji.'
+                : 'Nalewka została wznowiona jako szkic.'
+            );
 
-
-            } catch (err) {
-              Alert.alert('Błąd', 'Nie udało się wznowić nalewki.');
-              console.error(err);
-            }
-          },
+            navigation.replace('LiqueurDetails', { liqueur: newLiqueur });
+          } catch (err) {
+            Alert.alert('Błąd', isRecipe
+              ? 'Nie udało się zastosować tego przepisu.'
+              : 'Nie udało się wznowić nalewki.'
+            );
+            console.error(err);
+          }
         },
-      ],
-      { cancelable: true }
-    );
-  };
+      },
+    ],
+    { cancelable: true }
+  );
+};
 
   // --- Nowa, uniwersalna formatDate, przyjmuje Date lub string ---
 const formatDate = (dateInput) => {
@@ -315,8 +335,9 @@ const formatDate = (dateInput) => {
   };
 
   // Zatwierdzanie daty rozpoczęcia: zmiana statusu na 'active'
-  const confirmStartDate = async () => {
+const confirmStartDate = async () => {
   console.log('confirmStartDate start');
+
   if (!startDate) {
     console.warn('Brak startDate');
     return;
@@ -332,117 +353,53 @@ const formatDate = (dateInput) => {
     Alert.alert('Błąd przy zapisie daty:', updateError.message);
     return;
   }
+
   console.log('Nalewka zaktualizowana');
+  console.log('Stages', stages);
 
-  console.log('Stages', stages)
-
-if (!stages || stages.length === 0) {
-  Alert.alert(
-    'Informacja',
-    'Brak etapów do aktualizacji. Nalewka zapisana bez etapów.',
-    [
-      {
-        text: 'OK',
-        onPress: () => {
-          setCurrentLiqueur({
-            ...currentLiqueur,
-            status: 'active',
-            created_at: startDate.toISOString(),
-          });
-          setShowStartDateModal(false);
-          fetchStages();
-          fetchIngredients();
-          navigation.replace('LiqueurDetails', {
-            liqueur: {
+  if (!stages || stages.length === 0) {
+    Alert.alert(
+      'Informacja',
+      'Brak etapów do aktualizacji. Nalewka zapisana bez etapów.',
+      [
+        {
+          text: 'OK',
+          onPress: () => {
+            setCurrentLiqueur({
               ...currentLiqueur,
               status: 'active',
               created_at: startDate.toISOString(),
-            },
-          });
+            });
+            setShowStartDateModal(false);
+            fetchStages();
+            fetchIngredients();
+            navigation.replace('LiqueurDetails', {
+              liqueur: {
+                ...currentLiqueur,
+                status: 'active',
+                created_at: startDate.toISOString(),
+              },
+            });
+          }
         }
-      }
-    ],
-    { cancelable: false }
-  );
-  return; // kończymy funkcję, bo Alert jest asynchroniczny
-}
-if(currentLiqueur.notification !== true ) {
-   Alert.alert(
-    'Informacja',
-    'Powiadomienia nie zostały zaplanowane. Brak włączonej zgody.',
-    [
-      {
-        text: 'OK',
-        onPress: () => {
-          setCurrentLiqueur({
-            ...currentLiqueur,
-            status: 'active',
-            created_at: startDate.toISOString(),
-          });
-          setShowStartDateModal(false);
-          fetchStages();
-          fetchIngredients();
-          navigation.replace('LiqueurDetails', {
-            liqueur: {
-              ...currentLiqueur,
-              status: 'active',
-              created_at: startDate.toISOString(),
-            },
-          });
-        }
-      }
-    ],
-    { cancelable: false }
-  );
-  return; // kończymy funkcję, bo Alert jest asynchroniczny
+      ],
+      { cancelable: false }
+    );
+    return;
+  }
 
-}
-  console.log('Else');
-
-  const notificationHour = userNotificationHour ?? '15:00';
-  const [hourStr = '15', minuteStr = '0'] = notificationHour.split(':');
-  const hour = parseInt(hourStr, 10);
-  const minute = parseInt(minuteStr, 10);
-
-  const updates = await Promise.all(
+  // 1. Zawsze aktualizujemy daty etapów
+  await Promise.all(
     stages.map(async (stage) => {
       try {
         const newDate = new Date(startDate);
         newDate.setDate(newDate.getDate() + (stage.execute_after_days || 0));
-        newDate.setHours(0, 0, 0, 0);
+        newDate.setUTCHours(12, 0, 0, 0);
+
 
         const { error: stageError } = await supabase
           .from('etapy')
           .update({ date: newDate.toISOString() })
-          .eq('id', stage.id);
-
-        const stageDate = new Date(startDate);
-        stageDate.setDate(stageDate.getDate() + (stage.execute_after_days || 0));
-        stageDate.setHours(hour, minute, 0, 0);
-
-        const now = Date.now();
-        if (stageDate.getTime() < now) return;
-
-        if (stage.notification_id) {
-          try {
-            await Notifications.cancelScheduledNotificationAsync(stage.notification_id);
-          } catch (e) {
-            console.warn('Nie można anulować powiadomienia', stage.notification_id, e);
-          }
-        }
-
-        const newNotificationId = await Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Przypomnienie',
-            body: `Etap "${stage.note}" zaplanowany na ${stageDate.toLocaleDateString('pl-PL')}`,
-            data: { stageId: stage.id },
-          },
-          trigger: { date: stageDate },
-        });
-
-        await supabase
-          .from('etapy')
-          .update({ notification_id: newNotificationId })
           .eq('id', stage.id);
 
         if (stageError) {
@@ -451,33 +408,70 @@ if(currentLiqueur.notification !== true ) {
 
         return stageError;
       } catch (e) {
-        console.error('Wyjątek podczas update etapu:', stage.id, e);
+        console.error('Wyjątek przy aktualizacji etapu:', stage.id, e);
         return e;
       }
     })
   );
 
+  // 2. Jeśli powiadomienia są włączone, ustawiamy je
+  if (currentLiqueur.notification === true) {
+    const notificationHour = userNotificationHour ?? '15:00';
+    const [hourStr = '15', minuteStr = '0'] = notificationHour.split(':');
+    const hour = parseInt(hourStr, 10);
+    const minute = parseInt(minuteStr, 10);
 
+    await Promise.all(
+      stages.map(async (stage) => {
+        try {
+          const stageDate = new Date(startDate);
+          stageDate.setDate(stageDate.getDate() + (stage.execute_after_days || 0));
+          stageDate.setHours(hour, minute, 0, 0);
 
+          if (Date.now() > stageDate.getTime()) return;
 
-  // Aktualizacja stanu i zamknięcie modala
+          if (stage.notification_id) {
+            try {
+              await Notifications.cancelScheduledNotificationAsync(stage.notification_id);
+            } catch (e) {
+              console.warn('Nie można anulować powiadomienia', stage.notification_id, e);
+            }
+          }
+
+          const newNotificationId = await Notifications.scheduleNotificationAsync({
+            content: {
+              title: 'Przypomnienie',
+              body: `Etap "${stage.note}" zaplanowany na ${stageDate.toLocaleDateString('pl-PL')}`,
+              data: { stageId: stage.id },
+            },
+            trigger: { date: stageDate },
+          });
+
+          await supabase
+            .from('etapy')
+            .update({ notification_id: newNotificationId })
+            .eq('id', stage.id);
+        } catch (e) {
+          console.error('Wyjątek przy powiadomieniu etapu:', stage.id, e);
+        }
+      })
+    );
+  } else {
+    Alert.alert(
+      'Informacja',
+      'Powiadomienia nie zostały zaplanowane. Brak włączonej zgody.'
+    );
+  }
+
+  // 3. Finalna aktualizacja stanu UI
   setCurrentLiqueur({
     ...currentLiqueur,
     status: 'active',
     created_at: startDate.toISOString(),
   });
-
   setShowStartDateModal(false);
-
-  // Czekaj na aktualizację etapów i składników
-  if (fetchStages) {
-    await fetchStages();
-  }
-  if (fetchIngredients) {
-    await fetchIngredients();
-  }
-
-  // Nawiguj do szczegółów wznowionej nalewki z aktualnymi danymi
+  fetchStages();
+  fetchIngredients();
   navigation.replace('LiqueurDetails', {
     liqueur: {
       ...currentLiqueur,
@@ -485,9 +479,48 @@ if(currentLiqueur.notification !== true ) {
       created_at: startDate.toISOString(),
     },
   });
-
-  console.log('Nawigacja do LiqueurDetails wykonana');
 };
+
+
+// usuwanie
+  const onDelete = () => {
+    Alert.alert(
+      'Usuń nalewkę',
+      'Na pewno?',
+      [
+        { text: 'Anuluj', style: 'cancel' },
+        {
+          text: 'Usuń',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await Promise.all(
+                stages.map(async (s) => {
+                  if (s.notification_id) {
+                    try {
+                      await Notifications.cancelScheduledNotificationAsync(s.notification_id);
+                    } catch (err) {
+                      console.warn(`Nie udało się anulować powiadomienia etapu ${s.id}:`, err);
+                    }
+                  }
+                })
+              );
+
+              await supabase.from('skladniki').delete().eq('nalewka_id', liqueur.id);
+              await supabase.from('etapy').delete().eq('nalewka_id', liqueur.id);
+              await supabase.from('nalewki').delete().eq('id', liqueur.id);
+              navigation.goBack();
+            } catch (e) {
+              Alert.alert('Błąd', e.message);
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
+
 
 
   // Udostępnianie nalewki po emailu
@@ -666,79 +699,126 @@ const toggleNotifications = async () => {
           >
             {/* --- Nagłówek z nazwą i ikonami --- */}
             <View style={styles.headerRow}>
-              <Text style={styles.title}>{currentLiqueur.name}</Text>
+  <Text style={styles.title}>{currentLiqueur.name}</Text>
 
-              <View style={styles.headerRight}>
-                {currentLiqueur.status !== 'archive' && currentLiqueur.status !== 'waiting' && (
-                  <>
-                     <MaterialIcons
-    name="notifications"
-    size={norm(20)}
-    color={notificationsEnabled ? '#a97458' : '#6e6e6e'}
-    style={{ marginRight: norm(8) }}
-  />
-  <Switch
-    value={notificationsEnabled}
-    onValueChange={toggleNotifications}
-    disabled={togglingNotifications}
-    trackColor={{ false: '#48423a', true: '#a97458' }}
-    thumbColor={notificationsEnabled ? '#f5e6c4' : '#888'}
-  />
+  <View style={styles.headerRight}>
+    {/* ACTIVE & NEW: notifications / share / archive */}
+    {currentLiqueur.status !== 'archive' &&
+     currentLiqueur.status !== 'waiting' &&
+     currentLiqueur.status !== 'recipes' && (
+      <>
+        <MaterialIcons
+          name="notifications"
+          size={norm(20)}
+          color={notificationsEnabled ? '#a97458' : '#6e6e6e'}
+          style={{ marginRight: norm(8) }}
+        />
+        <Switch
+          value={notificationsEnabled}
+          onValueChange={toggleNotifications}
+          disabled={togglingNotifications}
+          trackColor={{ false: '#48423a', true: '#a97458' }}
+          thumbColor={notificationsEnabled ? '#f5e6c4' : '#888'}
+        />
 
-  {/* Ikona „Udostępnij” */}
-  <TouchableOpacity
-    onPress={openShareModal}
-    style={styles.iconButton}
-    activeOpacity={0.7}
-  >
-    <MaterialIcons name="share" size={norm(24)} color="#f5e6c4" />
-  </TouchableOpacity>
+        <TouchableOpacity
+          onPress={openShareModal}
+          style={styles.iconButton}
+          activeOpacity={0.7}
+        >
+          <MaterialIcons name="share" size={norm(24)} color="#f5e6c4" />
+        </TouchableOpacity>
 
-  {/* Przycisk archiwizacji */}
-  <TouchableOpacity
-    onPress={archiveLiqueur}
-    style={{ marginLeft: norm(8), padding: norm(4) }}
-    activeOpacity={0.7}
-    accessibilityLabel="Archiwizuj nalewkę"
-  >
-    <MaterialIcons name="archive" size={norm(20)} color="#6e6e6e" />
-  </TouchableOpacity>
-                
-                  </>
-                )}
-                {currentLiqueur.status == 'waiting' && ( 
-                  <TouchableOpacity
-                      onPress={openShareModal}
-                      style={styles.iconButton}
-                      activeOpacity={0.7}
-                    >
-                      <MaterialIcons name="share" size={norm(24)} color="#f5e6c4" />
-                    </TouchableOpacity>
-)}
-                
+        <TouchableOpacity
+          onPress={archiveLiqueur}
+          style={{ marginLeft: norm(8), padding: norm(4) }}
+          activeOpacity={0.7}
+          accessibilityLabel="Archiwizuj nalewkę"
+        >
+          <MaterialIcons name="archive" size={norm(20)} color="#6e6e6e" />
+        </TouchableOpacity>
+      </>
+    )}
 
-                {currentLiqueur.status === 'archive' && (
-                  <TouchableOpacity
-                    onPress={resumeLiqueur}
-                    style={styles.resumeBtn}
-                    activeOpacity={0.7}
-                    accessibilityLabel="Wznów nalewkę"
-                  >
-                    <MaterialIcons
-                      name="play-circle-outline"
-                      size={norm(20)}
-                      color="#2e1d14"
-                    />
-                    <Text style={styles.resumeText}>Wznów</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
+    {/* WAITING: only share */}
+    {currentLiqueur.status === 'waiting' && (
+      <TouchableOpacity
+        onPress={openShareModal}
+        style={styles.iconButton}
+        activeOpacity={0.7}
+      >
+        <MaterialIcons name="share" size={norm(24)} color="#f5e6c4" />
+      </TouchableOpacity>
+    )}
+
+    {/* RECIPES: share + use template */}
+    {currentLiqueur.status === 'recipes' && (
+      <>
+        <TouchableOpacity
+          onPress={openShareModal}
+          style={styles.iconButton}
+          activeOpacity={0.7}
+        >
+          <MaterialIcons name="share" size={norm(24)} color="#f5e6c4" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={resumeLiqueur}
+          style={styles.resumeBtn}
+          activeOpacity={0.7}
+          accessibilityLabel="Użyj schematu"
+        >
+          <MaterialIcons
+            name="content-paste"
+            size={norm(20)}
+            color="#2e1d14"
+          />
+          <Text style={styles.resumeText}>Użyj schematu</Text>
+        </TouchableOpacity>
+      </>
+    )}
+
+    {/* ARCHIVE: resume */}
+    {currentLiqueur.status === 'archive' && (
+      <TouchableOpacity
+        onPress={resumeLiqueur}
+        style={styles.resumeBtn}
+        activeOpacity={0.7}
+        accessibilityLabel="Wznów nalewkę"
+      >
+        <MaterialIcons
+          name="play-circle-outline"
+          size={norm(20)}
+          color="#2e1d14"
+        />
+        <Text style={styles.resumeText}>Wznów</Text>
+      </TouchableOpacity>
+      
+    )}
+    {currentLiqueur.status === 'archive' && (
+      <TouchableOpacity
+        onPress={onDelete}
+        style={styles.deleteBtn}
+        activeOpacity={0.7}
+        accessibilityLabel="Usuń"
+      >
+        <MaterialIcons
+          name="delete"
+          size={norm(20)}
+          color="#2e1d14"
+        />
+        <Text style={styles.resumeText}>Usuń</Text>
+      </TouchableOpacity>
+      
+    )}
+  </View>
+</View>
+
 
             {/* --- Data archiwizacji (jeśli archiwum) --- */}
             {currentLiqueur.status === 'archive' && (
               <View style={styles.archiveInfo}>
-                <MaterialIcons name="archive" size={norm(18)} color="#d0c4af" />
+                <MaterialIcons name="archive" size={norm(20)} color="#d0c4af" />
                 <Text style={styles.archiveText}>
                   Archiwum: {formatDate(currentLiqueur.archive_date)}
                 </Text>
@@ -991,8 +1071,8 @@ const toggleNotifications = async () => {
             } else if (event.type === 'set' && date) {
               setStartDate(date); // ustaw datę
               // Jeśli chcesz, możesz też tu zamknąć modal i pominąć przycisk "Potwierdź"
-              // setShowStartDateModal(false);
-              // confirmStartDate();
+              setShowStartDateModal(false);
+              confirmStartDate();
             }
           }}
         />
@@ -1103,11 +1183,12 @@ safeContainer: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
+      color: 'black',
       marginTop: norm(10),
       marginBottom: norm(16),
     },
     title: {
-      fontSize: norm(24),
+      fontSize: norm(20),
       fontWeight: 'bold',
       color: '#f5e6c4',
       flexShrink: 1,
@@ -1147,6 +1228,16 @@ safeContainer: {
       borderRadius: norm(8),
       paddingHorizontal: norm(8),
       paddingVertical: norm(6),
+      marginLeft: 20,
+    },
+     deleteBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#823330',
+      borderRadius: norm(8),
+      paddingHorizontal: norm(8),
+      paddingVertical: norm(6),
+      marginLeft: 10,
     },
     resumeText: {
       color: '#2e1d14',

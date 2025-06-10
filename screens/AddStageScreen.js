@@ -1,40 +1,47 @@
-// Zmiany: Usunięto pole daty i dodano pole execute_after_days
-
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Keyboard,
   KeyboardAvoidingView,
+  PixelRatio,
   Platform,
   SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
+  useWindowDimensions,
   View
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import CustomCheckbox from './CustomCheckbox';
 
+function normalize(size, screenWidth) {
+  const scale = screenWidth / 375;
+  return Math.round(PixelRatio.roundToNearestPixel(size * scale));
+}
+
 export default function AddStageScreen({ route, navigation }) {
   const { stage, liqueurId } = route.params;
-  const isEditing = !!stage;
+  const isEditing = Boolean(stage);
+  const { width } = useWindowDimensions();
+  const styles = useMemo(() => createStyles(width), [width]);
 
   const [note, setNote] = useState(stage?.note || '');
   const [executeAfterDays, setExecuteAfterDays] = useState(stage?.execute_after_days?.toString() || '');
-  const [loading, setLoading] = useState(false);
-
   const [ingredients, setIngredients] = useState([]);
   const [selectedIngredients, setSelectedIngredients] = useState([]);
   const [newIngredientName, setNewIngredientName] = useState('');
   const [newIngredientAmount, setNewIngredientAmount] = useState('');
   const [addingNewIngredient, setAddingNewIngredient] = useState(false);
   const [addingIngredientLoading, setAddingIngredientLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const scrollRef = useRef();
-  const onInputFocus = (offset = 100) => {
+  const onInputFocus = offset => {
     setTimeout(() => {
       scrollRef.current?.scrollTo({ y: offset, animated: true });
     }, 300);
@@ -44,171 +51,137 @@ export default function AddStageScreen({ route, navigation }) {
     fetchIngredients();
   }, []);
 
-  const fetchIngredients = async () => {
+  async function fetchIngredients() {
     try {
-      let query = supabase
-        .from('skladniki')
-        .select('*')
-        .eq('nalewka_id', liqueurId);
-
-      if (isEditing && stage) {
-        query = query.or(`etap_id.is.null,etap_id.eq.${stage.id}`);
-      } else {
-        query = query.is('etap_id', null);
-      }
-
-      const { data, error } = await query;
+      let q = supabase.from('skladniki').select('*').eq('nalewka_id', liqueurId);
+      if (isEditing) q = q.or(`etap_id.is.null,etap_id.eq.${stage.id}`);
+      else q = q.is('etap_id', null);
+      const { data, error } = await q;
       if (error) throw error;
       setIngredients(data);
-
-      if (isEditing && stage) {
-        const selectedIds = data.filter(s => s.etap_id === stage.id).map(s => s.id);
-        setSelectedIngredients(selectedIds);
-      } else {
-        setSelectedIngredients([]);
-      }
-    } catch (error) {
-      Alert.alert('Błąd', error.message);
+      setSelectedIngredients(isEditing
+        ? data.filter(s => s.etap_id === stage.id).map(s => s.id)
+        : []
+      );
+    } catch (e) {
+      Alert.alert('Błąd', e.message);
     }
-  };
+  }
 
-  const toggleIngredientSelection = (id) => {
+  function toggleIngredientSelection(id) {
     setSelectedIngredients(prev =>
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
-  };
+  }
 
-  const addNewIngredient = async () => {
+  async function addNewIngredient() {
     if (!newIngredientName.trim() || !newIngredientAmount.trim()) {
       Alert.alert('Błąd', 'Uzupełnij nazwę i ilość!');
       return;
     }
-
     setAddingIngredientLoading(true);
     try {
       let etapId = stage?.id;
       if (!etapId) {
-        const { data, error } = await supabase.from('etapy').insert([
-          { note: note.trim(), execute_after_days: Number(executeAfterDays), nalewka_id: liqueurId },
-        ]).select('id').single();
+        const { data, error } = await supabase
+          .from('etapy')
+          .insert([{ note: note.trim(), execute_after_days: Number(executeAfterDays), nalewka_id: liqueurId }])
+          .select('id')
+          .single();
         if (error) throw error;
         etapId = data.id;
-        route.params.stage = { ...stage, id: etapId, note, execute_after_days: Number(executeAfterDays) };
+        route.params.stage = { id: etapId, note, execute_after_days: Number(executeAfterDays) };
       }
-
-      const { data: newIngr, error } = await supabase.from('skladniki').insert([
-        {
+      const { data: newIngr, error } = await supabase
+        .from('skladniki')
+        .insert([{
           name: newIngredientName.trim(),
           amount: newIngredientAmount.trim(),
           nalewka_id: liqueurId,
-          etap_id: etapId,
-        },
-      ]).select('*').single();
-
+          etap_id: etapId
+        }])
+        .select('*')
+        .single();
       if (error) throw error;
       setIngredients(prev => [...prev, newIngr]);
       setSelectedIngredients(prev => [...prev, newIngr.id]);
       setNewIngredientName('');
       setNewIngredientAmount('');
       setAddingNewIngredient(false);
-    } catch (error) {
-      Alert.alert('Błąd', error.message);
+    } catch (e) {
+      Alert.alert('Błąd', e.message);
     } finally {
       setAddingIngredientLoading(false);
     }
-  };
-
-const onSave = async () => {
-  if (!note.trim()) {
-    alert('Opis etapu nie może być pusty!');
-    return;
   }
 
-  const days = Number(executeAfterDays);
-  if (isNaN(days)) {
-    alert('Podaj poprawną liczbę dni!');
-    return;
-  }
-
-  setLoading(true);
-  try {
-    // 1. Pobierz datę utworzenia nalewki
-    const { data: nalewkaData, error: nalewkaError } = await supabase
-      .from('nalewki')
-      .select('created_at')
-      .eq('id', liqueurId)
-      .single();
-
-      let dataISO = null;
-
-if (nalewkaData?.created_at) {
-  const createdAt = new Date(nalewkaData.created_at);
-  const calculatedDate = new Date(createdAt);
-  calculatedDate.setDate(createdAt.getDate() + Number(executeAfterDays));
-  dataISO = calculatedDate.toISOString();
-}
-    if (nalewkaError) throw nalewkaError;
-
-    const createdAt = new Date(nalewkaData.created_at);
-    const calculatedDate = new Date(createdAt);
-    calculatedDate.setDate(createdAt.getDate() + days);
-
-    
-    let etapId = stage?.id;
-    if (isEditing) {
-      const { error } = await supabase
-        .from('etapy')
-        .update({
-          note: note.trim(),
-          execute_after_days: days,
-          date: dataISO,
-        })
-        .eq('id', etapId);
-      if (error) throw error;
-    } else {
-      const { data, error } = await supabase.from('etapy').insert([
-        {
-          note: note.trim(),
-          execute_after_days: days,
-          date: dataISO,
-          nalewka_id: liqueurId,
-        },
-      ]).select('id').single();
-      if (error) throw error;
-      etapId = data.id;
+  const onSave = async () => {
+    if (!note.trim()) {
+      Alert.alert('Błąd', 'Opis etapu nie może być pusty!');
+      return;
     }
+    const days = Number(executeAfterDays);
+    if (isNaN(days)) {
+      Alert.alert('Błąd', 'Podaj poprawną liczbę dni!');
+      return;
+    }
+    setLoading(true);
+    try {
+      let etapId = stage?.id;
+      if (isEditing) {
+        const { error } = await supabase
+          .from('etapy')
+          .update({ note: note.trim(), execute_after_days: days })
+          .eq('id', etapId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from('etapy')
+          .insert([{ note: note.trim(), execute_after_days: days, nalewka_id: liqueurId }])
+          .select('id')
+          .single();
+        if (error) throw error;
+        etapId = data.id;
+      }
 
-    const { error: detachError } = await supabase
-      .from('skladniki')
-      .update({ etap_id: null })
-      .eq('etap_id', etapId);
-    if (detachError) throw detachError;
-
-    if (selectedIngredients.length > 0) {
-      const { error: assignError } = await supabase
+      const { error: dErr } = await supabase
         .from('skladniki')
-        .update({ etap_id: etapId })
-        .in('id', selectedIngredients);
-      if (assignError) throw assignError;
+        .update({ etap_id: null })
+        .eq('etap_id', etapId);
+      if (dErr) throw dErr;
+
+      if (selectedIngredients.length) {
+        const { error: aErr } = await supabase
+          .from('skladniki')
+          .update({ etap_id: etapId })
+          .in('id', selectedIngredients);
+        if (aErr) throw aErr;
+      }
+
+      navigation.goBack();
+    } catch (e) {
+      Alert.alert('Błąd', e.message);
+    } finally {
+      setLoading(false);
     }
-
-    navigation.goBack();
-  } catch (error) {
-    Alert.alert('Błąd', error.message);
-  } finally {
-    setLoading(false);
-  }
-};
-
+  };
 
   return (
     <SafeAreaView style={styles.safeContainer}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : StatusBar.currentHeight + 10}
+      >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <ScrollView ref={scrollRef} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-            <View style={styles.customHeader}>
-              <Text style={styles.title}>{isEditing ? 'Edytowanie etapu' : 'Dodanie etapu'}</Text>
-            </View>
+          <ScrollView
+            ref={scrollRef}
+            contentContainerStyle={styles.container}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text style={styles.title}>
+              {isEditing ? 'Edytowanie etapu' : 'Dodanie etapu'}
+            </Text>
 
             <Text style={styles.label}>Opis etapu:</Text>
             <TextInput
@@ -233,56 +206,64 @@ if (nalewkaData?.created_at) {
             />
 
             <Text style={styles.label}>Wybierz składniki do etapu:</Text>
-            <View style={{ maxHeight: 150, marginBottom: 12 }}>
-              {ingredients.map((ingredient) => (
+            <View style={styles.checkboxContainer}>
+              {ingredients.map(i => (
                 <CustomCheckbox
-                  key={ingredient.id}
-                  label={ingredient.name}
-                  checked={selectedIngredients.includes(ingredient.id)}
-                  onPress={() => toggleIngredientSelection(ingredient.id)}
+                  key={i.id}
+                  label={`${i.name} — ${i.amount}`}
+                  checked={selectedIngredients.includes(i.id)}
+                  onPress={() => toggleIngredientSelection(i.id)}
                 />
               ))}
             </View>
 
             {!addingNewIngredient && (
-              <TouchableOpacity style={styles.addButton} onPress={() => setAddingNewIngredient(true)}>
+              <TouchableOpacity
+                style={styles.addIngredientButton}
+                onPress={() => setAddingNewIngredient(true)}
+              >
                 <Text style={styles.addButtonText}>Dodaj nowy składnik</Text>
               </TouchableOpacity>
             )}
 
-          {addingNewIngredient && (
-  <View style={styles.newIngredientContainer}>
-    <TextInput
-      style={styles.input}
-      placeholder="Nazwa składnika"
-      placeholderTextColor="#bba68f"
-      value={newIngredientName}
-      onChangeText={setNewIngredientName}
-      onFocus={() => onInputFocus(300)}
-    />
-    <TextInput
-      style={styles.input}
-      placeholder="Ilość (np. 100g)"
-      placeholderTextColor="#bba68f"
-      value={newIngredientAmount}
-      onChangeText={setNewIngredientAmount}
-      onFocus={() => onInputFocus(350)}
-    />
-    <TouchableOpacity
-      style={[styles.addButton, addingIngredientLoading && { opacity: 0.6 }]}
-      onPress={addNewIngredient}
-      disabled={addingIngredientLoading}
-    >
-      <Text style={styles.addButtonText}>
-        {addingIngredientLoading ? 'Dodawanie...' : 'Dodaj składnik'}
-      </Text>
-    </TouchableOpacity>
-  </View>
-)}
+            {addingNewIngredient && (
+              <View style={styles.newIngredientContainer}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Nazwa składnika"
+                  placeholderTextColor="#bba68f"
+                  value={newIngredientName}
+                  onChangeText={setNewIngredientName}
+                  onFocus={() => onInputFocus(300)}
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Ilość (np. 100 g)"
+                  placeholderTextColor="#bba68f"
+                  value={newIngredientAmount}
+                  onChangeText={setNewIngredientAmount}
+                  onFocus={() => onInputFocus(350)}
+                />
+                <TouchableOpacity
+                  style={[styles.addIngredientButton, addingIngredientLoading && { opacity: 0.6 }]}
+                  onPress={addNewIngredient}
+                  disabled={addingIngredientLoading}
+                >
+                  <Text style={styles.addButtonText}>
+                    {addingIngredientLoading ? 'Dodawanie...' : 'Dodaj składnik'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
-
-            <TouchableOpacity style={[styles.saveButton, loading && { opacity: 0.6 }]} onPress={onSave} disabled={loading}>
-              <Text style={styles.saveButtonText}>{loading ? 'Zapisywanie...' : isEditing ? 'Zapisz zmiany' : 'Dodaj etap'}</Text>
+            <TouchableOpacity
+              style={[styles.saveButton, loading && { opacity: 0.6 }]}
+              onPress={onSave}
+              disabled={loading}
+            >
+              <Text style={styles.saveButtonText}>
+                {loading ? 'Zapisywanie...' : isEditing ? 'Zapisz zmiany' : 'Dodaj etap'}
+              </Text>
             </TouchableOpacity>
           </ScrollView>
         </TouchableWithoutFeedback>
@@ -291,16 +272,70 @@ if (nalewkaData?.created_at) {
   );
 }
 
-const styles = StyleSheet.create({
-  safeContainer: { flex: 1, backgroundColor: '#2e1d14' },
-  container: { padding: 24 },
-  label: { color: '#bba68f', fontSize: 16, marginBottom: 6, marginTop: 10, fontWeight: '600' },
-  input: { backgroundColor: '#5a4635', borderRadius: 12, padding: 12, fontSize: 16, color: '#f5e6c4', marginBottom: 12 },
-  saveButton: { backgroundColor: '#a97458', paddingVertical: 16, borderRadius: 14, alignItems: 'center', marginTop: 24 },
-  saveButtonText: { color: '#2e1d14', fontWeight: 'bold', fontSize: 18 },
-  customHeader: { paddingTop: Platform.OS === 'ios' ? 50 : 20, paddingBottom: 10, backgroundColor: '#2e1d14', alignItems: 'center' },
-  title: { fontSize: 22, fontWeight: 'bold', color: '#f5e6c4', marginBottom: 24, fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif' },
-  addButton: { backgroundColor: '#8c6b44', paddingVertical: 14, borderRadius: 14, alignItems: 'center', marginBottom: 16 },
-  addButtonText: { color: '#f5e6c4', fontWeight: 'bold', fontSize: 16 },
-  newIngredientContainer: { marginBottom: 12 },
-});
+const createStyles = width => {
+  const norm = sz => normalize(sz, width);
+  return StyleSheet.create({
+    safeContainer: {
+      flex: 1,
+      backgroundColor: '#2e1d14',
+      paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0
+    },
+    container: {
+      padding: norm(20),
+    },
+    title: {
+      fontSize: norm(22),
+      fontWeight: 'bold',
+      color: '#f5e6c4',
+      textAlign: 'center',
+      marginBottom: norm(24),
+      fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif'
+    },
+    label: {
+      color: '#bba68f',
+      fontSize: norm(16),
+      marginBottom: norm(6),
+      marginTop: norm(10),
+      fontWeight: '600'
+    },
+    input: {
+      backgroundColor: '#5a4635',
+      color: '#f5e6c4',
+      borderRadius: 12,
+      padding: norm(12),
+      fontSize: norm(16),
+      marginBottom: norm(12)
+    },
+    checkboxContainer: {
+      marginBottom: norm(12)
+    },
+    addIngredientButton: {
+      backgroundColor: '#8c6b44',
+      paddingVertical: norm(14),
+      borderRadius: 14,
+      alignItems: 'center',
+      marginTop: norm(8),
+      marginBottom: norm(16)
+    },
+    addButtonText: {
+      color: '#f5e6c4',
+      fontWeight: 'bold',
+      fontSize: norm(16)
+    },
+    newIngredientContainer: {
+      marginBottom: norm(12)
+    },
+    saveButton: {
+      backgroundColor: '#a97458',
+      paddingVertical: norm(16),
+      borderRadius: 14,
+      alignItems: 'center',
+      marginTop: norm(24)
+    },
+    saveButtonText: {
+      color: '#2e1d14',
+      fontWeight: 'bold',
+      fontSize: norm(18)
+    }
+  });
+};

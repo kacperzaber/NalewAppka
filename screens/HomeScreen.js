@@ -68,6 +68,8 @@ export default function HomeScreen() {
   const [userId, setUserId] = useState(null);
   const [activeTab, setActiveTab] = useState('active');
   const [modalDate, setModalDate] = useState('');
+  const [recipesList, setRecipesList] = useState([]);
+
 
   // pobierz użytkownika
   useEffect(() => {
@@ -80,23 +82,97 @@ export default function HomeScreen() {
   }, []);
 
   // odśwież dane po userId
-  useEffect(() => {
-    if (!userId) return;
-    fetchAllData();
-    fetchArchivedData();
-  }, [userId]);
+ // odśwież dane po userId, włącznie z przepisami
+useEffect(() => {
+  if (!userId) return;
+  fetchAllData();
+  fetchArchivedData();
+  fetchRecipes();            // ← tutaj dopisujemy
+}, [userId]);
+
+  const fetchRecipes = async () => {
+  if (!userId) return;
+  try {
+    // 1. Pobierz listę przepisów
+    const { data: recipesData, error: recipesError } = await supabase
+      .from('nalewki')
+      .select('id, name, comment, created_at')
+      .eq('user_id', userId)
+      .eq('status', 'recipes')
+      .order('created_at', { ascending: false });
+    if (recipesError) throw recipesError;
+
+    const recipeIds = recipesData.map(r => r.id);
+    if (!recipeIds.length) {
+      setRecipesList([]);
+      return;
+    }
+
+    // 2. Pobierz WSZYSTKIE składniki
+    const { data: ingredientsData, error: ingError } = await supabase
+      .from('skladniki')
+      .select('nalewka_id')
+      .in('nalewka_id', recipeIds);
+    if (ingError) throw ingError;
+
+    // 3. Pobierz WSZYSTKIE etapy
+    const { data: stagesData, error: stError } = await supabase
+      .from('etapy')
+      .select('nalewka_id, execute_after_days')
+      .in('nalewka_id', recipeIds);
+    if (stError) throw stError;
+
+    // 4. Zbuduj mapy
+    const ingredientsCountMap = {};
+    ingredientsData.forEach(({ nalewka_id }) => {
+      ingredientsCountMap[nalewka_id] = (ingredientsCountMap[nalewka_id] || 0) + 1;
+    });
+
+    const stagesCountMap = {};
+    const totalDaysMap = {};
+    stagesData.forEach(({ nalewka_id, execute_after_days }) => {
+      stagesCountMap[nalewka_id] = (stagesCountMap[nalewka_id] || 0) + 1;
+      const prev = totalDaysMap[nalewka_id] || 0;
+      totalDaysMap[nalewka_id] = Math.max(prev, execute_after_days || 0);
+    });
+
+    // 5. Wzbogac listę
+    const enriched = recipesData.map(r => ({
+      ...r,
+      ingredients_count: ingredientsCountMap[r.id] || 0,
+      stages_count: stagesCountMap[r.id] || 0,
+      total_days: totalDaysMap[r.id] || 0,
+    }));
+
+    setRecipesList(enriched);
+  } catch (e) {
+    console.error('Błąd fetchRecipes:', e);
+    setRecipesList([]);
+  }
+};
+
+
 
   // odśwież przy zmianie zakładki
-  useFocusEffect(
-    useCallback(() => {
-      if (!userId) return;
-      activeTab === 'archive' ? fetchArchivedData() : fetchAllData();
-      if (route.params?.returnToModal) {
-        setTodayModalVisible(true);
-        navigation.setParams({ returnToModal: undefined });
-      }
-    }, [userId, activeTab, route.params?.returnToModal])
-  );
+useFocusEffect(
+  useCallback(() => {
+    if (!userId) return;
+
+    if (activeTab === 'archive') {
+      fetchArchivedData();
+    } else if (activeTab === 'recipes') {
+      fetchRecipes();
+    } else {
+      fetchAllData();
+    }
+
+    if (route.params?.returnToModal) {
+      setTodayModalVisible(true);
+      navigation.setParams({ returnToModal: undefined });
+    }
+  }, [userId, activeTab, route.params?.returnToModal])
+);
+
 
   // normalize + kafelki
   const numColumns = windowWidth < 360 ? 1 : 2;
@@ -109,6 +185,7 @@ export default function HomeScreen() {
     new: 'Nowe nalewki',
     shared: 'Udostępnione',
     archive: 'Archiwalne nalewki',
+    recipes: 'Przepisy', 
   };
 
   const skipTodaysStages = async () => {
@@ -131,78 +208,105 @@ export default function HomeScreen() {
     }
   };
 
-  const fetchAllData = async () => {
-    try {
-      const statuses = ['active','new','waiting'];
-      const { data: liqueursData, error: lError } = await supabase
-        .from('nalewki')
-        .select('*')
-        .eq('user_id', userId)
-        .in('status', statuses)
-        .order('created_at',{ ascending:false });
-      if (lError) throw lError;
-      setLiqueurs(liqueursData||[]);
+ const fetchAllData = async () => {
+  try {
+    // 1. Pobierz nalewki
+    const statuses = activeTab === 'recipes'
+  ? ['recipes']
+  : ['active','new','waiting'];
+    const { data: liqueursData, error: lError } = await supabase
+      .from('nalewki')
+      .select('*')
+      .eq('user_id', userId)
+      .in('status', statuses)
+      .order('created_at',{ ascending:false });
+    if (lError) throw lError;
+    setLiqueurs(liqueursData || []);
 
-      // przygotuj mapę dat
-      const createdMap = {};
-      liqueursData.forEach(l => {
-        createdMap[l.id] = l.created_at ? new Date(l.created_at) : null;
-      });
+    // 2. Mapa dat startu
+    const createdMap = {};
+    liqueursData.forEach(l => {
+      createdMap[l.id] = l.created_at ? new Date(l.created_at) : null;
+    });
 
-      const { data: stagesData, error: sError } = await supabase
-        .from('etapy')
-        .select('nalewka_id,note,execute_after_days,id,is_done,skip_notif')
-        .or('skip_notif.eq.false,skip_notif.is.null');
-      if (sError) throw sError;
+    // 3. Pobierz etapy (pomijając skip_notif)
+    const { data: stagesData, error: sError } = await supabase
+      .from('etapy')
+      .select('nalewka_id,note,execute_after_days,id,is_done,skip_notif')
+      .or('skip_notif.eq.false,skip_notif.is.null');
+    if (sError) throw sError;
 
-      // dziś
-      const now = new Date();
-      now.setHours(0,0,0,0);
-      const todayStr = now.toISOString().slice(0,10);
+    // 4. ustalamy "dziś" raz, w południe UTC (żeby uniknąć przesunięć UTC/+02)
+    const cutoff = new Date();
+    cutoff.setUTCHours(12, 0, 0, 0);
+    const todayStr = cutoff.toISOString().slice(0,10);
 
-      const nextMap = {};
-      stagesData.forEach(stage => {
-        const start = createdMap[stage.nalewka_id];
-        if (!start) return;
-        const dt = new Date(start);
-        dt.setHours(0,0,0,0);
-        dt.setDate(dt.getDate() + (stage.execute_after_days||0));
-        if (dt < now) return;
-        const key = stage.nalewka_id;
-        const existing = nextMap[key];
-        if (!existing || dt < new Date(existing.date)) {
-          nextMap[key] = {
-            date: dt.toISOString().slice(0,10),
-            note: stage.note,
-            is_done: stage.is_done,
-            etap_id: stage.id,
-          };
-        }
-      });
-      setNextStagesByLiqueur(nextMap);
+    // 5. Zbuduj mapę kolejnych etapów
+    const nextMap = {};
+    stagesData.forEach(stage => {
+      const start = createdMap[stage.nalewka_id];
+      if (!start) return;
 
-      // modal dzisiaj
-      const todays = Object.entries(nextMap).filter(([_,st])=>st.date===todayStr);
-      if (todays.length && !alertShown.current) {
-        alertShown.current = true;
-        const list = todays.map(([id,st]) => {
-          const l = liqueursData.find(x=>x.id===+id);
-          return l ? {
-            name: l.name,
-            note: st.note||'Brak notatki',
-            etap_id: st.etap_id,
-            is_done: st.is_done||false,
-            nalewka_id: +id,
-          } : null;
-        }).filter(Boolean);
-        setTodaysStagesList(list);
-        setTodayModalVisible(true);
+      const dt = new Date(start);
+      dt.setUTCHours(12, 0, 0, 0); // południe UTC
+      dt.setDate(dt.getDate() + (stage.execute_after_days || 0));
+
+      // jeśli etap jest przed południem dzisiaj UTC => pomiń
+      if (dt.getTime() < cutoff.getTime()) return;
+
+      const key = stage.nalewka_id;
+      const existing = nextMap[key];
+      if (!existing || new Date(existing.date).getTime() > dt.getTime()) {
+        nextMap[key] = {
+          date: dt.toISOString().slice(0,10), // YYYY-MM-DD
+          note: stage.note,
+          is_done: stage.is_done,
+          etap_id: stage.id,
+        };
       }
-    } catch (e) {
-      console.error(e);
-      setLiqueurs([]); setNextStagesByLiqueur({});
-    }
-  };
+    });
+
+    setNextStagesByLiqueur(nextMap);
+
+    // 6. Filtruj etapy na "dzisiaj"
+    const todays = Object.entries(nextMap).filter(([_, st]) =>
+      st.date === todayStr
+    );
+
+    console.log('todayStr=', todayStr, 'found todays=', todays.length);
+
+    // 7. pokaż modal jeśli coś jest
+   if (todays.length && !alertShown.current) {
+  alertShown.current = true;
+  const list = todays
+    .map(([id, st]) => {
+      // tutaj porównujemy jako stringi
+      const l = liqueursData.find(x => String(x.id) === id);
+      return l
+        ? {
+            name: l.name,
+            note: st.note || 'Brak notatki',
+            etap_id: st.etap_id,
+            is_done: st.is_done || false,
+            nalewka_id: +id,
+          }
+        : null;
+    })
+    .filter(Boolean);
+
+  console.log('setting todaysStagesList:', list);
+  setTodaysStagesList(list);
+  setTodayModalVisible(true);
+}
+
+
+  } catch (e) {
+    console.error(e);
+    setLiqueurs([]);
+    setNextStagesByLiqueur({});
+  }
+};
+
 
   const fetchArchivedData = async () => {
     try {
@@ -237,7 +341,7 @@ export default function HomeScreen() {
   };
 
   const acceptShared = async id => {
-    await supabase.from('nalewki').update({status:'new'}).eq('id',id);
+    await supabase.from('nalewki').update({status:'recipes'}).eq('id',id);
     fetchAllData();
   };
   const rejectShared = id => {
@@ -252,23 +356,23 @@ export default function HomeScreen() {
     ]);
   };
 
-  const getFiltered = () => (
-    activeTab==='archive'
-      ? archivedLiqueurs
-      : liqueurs.filter(l =>
-          activeTab==='shared'
-            ? l.status==='waiting'
-            : l.status===activeTab
-        )
-  );
+  const getFiltered = () => {
+  if (activeTab === 'archive')   return archivedLiqueurs;
+  if (activeTab === 'recipes')   return recipesList;
+  if (activeTab === 'shared')    return liqueurs.filter(l => l.status === 'waiting');
+  return liqueurs.filter(l => l.status === activeTab);
+};
+
   const countBy = st => liqueurs.filter(l=> st==='shared'?l.status==='waiting':l.status===st).length;
 
-  const tabs = [
-    {key:'active',icon:'flask-outline',color:'#2E7D32',count:countBy('active')},
-    {key:'new',icon:'time-outline',color:'#5C7AEA',count:countBy('new')},
-    {key:'shared',icon:'share-social-outline',color:'#F57C00',count:countBy('shared')},
-    {key:'archive',icon:'archive-outline',color:'#424242',count:archivedLiqueurs.length},
-  ];
+ const tabs = [
+  { key:'active',  icon:'flask-outline',           color:'#2E7D32', count: countBy('active') },
+  { key:'new',     icon:'time-outline',            color:'#5C7AEA', count: countBy('new') },
+  { key:'shared',  icon:'share-social-outline',    color:'#F57C00', count: countBy('shared') },
+  { key:'archive', icon:'archive-outline',         color:'#424242', count: archivedLiqueurs.length },
+  { key:'recipes', icon:'book-outline',            color:'#8D6E63', count: recipesList.length }, // ← tu
+];
+
 
   const goToStage = (liqId) => {
     const obj = liqueurs.find(l=>l.id===liqId);
@@ -362,6 +466,60 @@ export default function HomeScreen() {
       </View>
     );
   };
+  
+  // kafelek przepisow
+const renderRecipeItem = ({ item }) => {
+  const icon = getIconSourceByName(item.name);
+     return (
+      <View style={styles.itemWrapper(tileSize)}>
+        <TouchableOpacity
+  onPress={() => {
+    navigation.navigate('LiqueurDetails', {
+      liqueur: {
+        ...item,
+        status: 'recipes',
+        created_at: item.created_at || null,
+        description: item.description || '',
+        comment: item.comment || '',
+        from_user: '',
+        user_id: userId,
+      }
+    });
+  }}
+  style={[styles.itemTile, styles.archivedTile]}
+  activeOpacity={0.85}
+>
+
+        <Image source={icon} style={styles.liqueurIcon} resizeMode="contain"/>
+        <Text style={styles.itemText} numberOfLines={2}>{item.name}</Text>
+
+        {/* --- badge'y z liczbą składników i etapów --- */}
+            <View style={styles.badgesColumn}>
+          <View style={styles.badgeRow}>
+            <Text style={styles.badgeTextSmall}>🧪 Składniki: {item.ingredients_count}</Text>
+            <Text style={[styles.badgeTextSmall, styles.badgeSeparator]}>⏳ Etapy: {item.stages_count}</Text>
+          </View>
+          <View style={styles.badgeRow}>
+            <Text style={styles.badgeTextSmall}>⏲️ Czas: {item.total_days} dni</Text>
+          </View>
+        </View>
+       
+<View style={styles.badgeArchive}>
+            <Text style={styles.badgeTextArchive}>Przepis</Text>
+          </View>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.editHint}
+        onPress={() => navigation.navigate('EditLiqueur', { liqueur: item })}
+      >
+        <Ionicons name="pencil-outline" size={14} color="#a97458"/>
+        <Text style={styles.editHintText}>Edycja</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
+
 
   const renderArchived = ({ item }) => {
     const icon = getIconSourceByName(item.name);
@@ -375,7 +533,7 @@ export default function HomeScreen() {
           <Image source={icon} style={styles.liqueurIcon} resizeMode="contain"/>
           <Text style={styles.itemText} numberOfLines={2}>{item.name}</Text>
           <View style={styles.dateInfoContainer}>
-            <Text style={styles.newInfoText}>Nalewka zarchiwizowana.</Text>
+            <Text style={styles.newInfoText}>Archiwalna</Text>
             {item.comment && <Text style={styles.newInfoText}>{item.comment}</Text>}
           </View>
           <Text style={[styles.dateValue, styles.archiveDate]}>
@@ -426,12 +584,16 @@ export default function HomeScreen() {
           })}
         </View>
         <FlatList
-          data={activeTab==='archive'?archivedLiqueurs:getFiltered()}
-          keyExtractor={item=>item.id.toString()}
-          renderItem={activeTab==='archive'?renderArchived:renderItem}
-          numColumns={numColumns}
-          contentContainerStyle={styles.list}
-          columnWrapperStyle={styles.row}
+  data={getFiltered()} 
+  keyExtractor={item => item.id.toString()}
+  renderItem={
+    activeTab === 'archive' ? renderArchived
+    : activeTab === 'recipes' ? renderRecipeItem
+    : renderItem
+  }
+  numColumns={numColumns}
+  contentContainerStyle={styles.list}
+  columnWrapperStyle={styles.row}
          ListEmptyComponent={
   <Text style={styles.noDataText}>
     {activeTab === 'archive'
@@ -440,12 +602,14 @@ export default function HomeScreen() {
         ? 'Brak udostępnionych'
         : activeTab === 'new'
           ? 'Brak nalewek w trybie edycji'
+          : activeTab === 'recipes'
+          ? 'Brak przepisów'
           : 'Brak nalewek do wyświetlenia'}
   </Text>
 }
 
         />
-        <TouchableOpacity
+       <TouchableOpacity
           onPress={()=>navigation.navigate('AddLiqueur')}
           style={styles.addFloatingButton}
         >
@@ -746,5 +910,48 @@ export const createStyles = (width) => {
   shadowRadius: 6,
   elevation: 6,
    },
+  badgesColumn: {
+  marginTop: 10,
+  gap: 4,
+},
+
+badgesColumn: {
+  marginTop: 8,
+  gap: 4,
+  alignItems: 'flex-start',
+},
+
+badgeRow: {
+  flexDirection: 'column',
+  gap: 8,
+},
+
+badgeTextSmall: {
+  color: '#f5e6c4',
+  fontSize: 12,
+  fontWeight: '600',
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+  borderRadius: 12,
+  overflow: 'hidden',
+},
+badgeArchive: {
+  position: 'absolute',
+  top: 8,
+  right: 8,
+  backgroundColor: '#a97458',
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+  borderRadius: 12,
+},
+
+badgeTextArchive: {
+  color: '#fff',
+  fontSize: 11,
+  fontWeight: 'bold',
+},
+
+
+   
   });
 };
