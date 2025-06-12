@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -39,6 +39,7 @@ export default function EditIngredients({ route, navigation }) {
   const [amount, setAmount] = useState('');
   const [etapId, setEtapId] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const scrollViewRef = useRef(null);
 
   // Dropdown component
   function EtapDropdown({ etapy, selectedEtapId, onSelect }) {
@@ -188,6 +189,8 @@ export default function EditIngredients({ route, navigation }) {
     setName(item.name);
     setAmount(item.amount);
     setEtapId(item.etap_id);
+    // Przewiń na górę, aby pokazać formularz
+    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
   };
 
   const cancelEditing = () => {
@@ -222,7 +225,11 @@ export default function EditIngredients({ route, navigation }) {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.flex1}
       >
-        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          ref={scrollViewRef}
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+        >
           <Text style={styles.title}>Zarządzaj składnikami: {liqueur.name}</Text>
 
           <View style={styles.form}>
@@ -275,7 +282,6 @@ export default function EditIngredients({ route, navigation }) {
     </SafeAreaView>
   );
 }
-
 export const createStyles = width => {
   const norm = sz => normalize(sz, width);
   return StyleSheet.create({

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Keyboard,
@@ -31,7 +31,9 @@ export default function AddStageScreen({ route, navigation }) {
   const styles = useMemo(() => createStyles(width), [width]);
 
   const [note, setNote] = useState(stage?.note || '');
-  const [executeAfterDays, setExecuteAfterDays] = useState(stage?.execute_after_days?.toString() || '');
+  const [executeAfterDays, setExecuteAfterDays] = useState(
+    stage?.execute_after_days?.toString() || ''
+  );
   const [ingredients, setIngredients] = useState([]);
   const [selectedIngredients, setSelectedIngredients] = useState([]);
   const [newIngredientName, setNewIngredientName] = useState('');
@@ -40,13 +42,6 @@ export default function AddStageScreen({ route, navigation }) {
   const [addingIngredientLoading, setAddingIngredientLoading] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const scrollRef = useRef();
-  const onInputFocus = offset => {
-    setTimeout(() => {
-      scrollRef.current?.scrollTo({ y: offset, animated: true });
-    }, 300);
-  };
-
   useEffect(() => {
     fetchIngredients();
   }, []);
@@ -54,14 +49,17 @@ export default function AddStageScreen({ route, navigation }) {
   async function fetchIngredients() {
     try {
       let q = supabase.from('skladniki').select('*').eq('nalewka_id', liqueurId);
-      if (isEditing) q = q.or(`etap_id.is.null,etap_id.eq.${stage.id}`);
+      if (isEditing)
+        q = q.or(`etap_id.is.null,etap_id.eq.${stage.id}`);
       else q = q.is('etap_id', null);
+
       const { data, error } = await q;
       if (error) throw error;
       setIngredients(data);
-      setSelectedIngredients(isEditing
-        ? data.filter(s => s.etap_id === stage.id).map(s => s.id)
-        : []
+      setSelectedIngredients(
+        isEditing
+          ? data.filter((s) => s.etap_id === stage.id).map((s) => s.id)
+          : []
       );
     } catch (e) {
       Alert.alert('Błąd', e.message);
@@ -69,8 +67,8 @@ export default function AddStageScreen({ route, navigation }) {
   }
 
   function toggleIngredientSelection(id) {
-    setSelectedIngredients(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    setSelectedIngredients((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   }
 
@@ -85,26 +83,36 @@ export default function AddStageScreen({ route, navigation }) {
       if (!etapId) {
         const { data, error } = await supabase
           .from('etapy')
-          .insert([{ note: note.trim(), execute_after_days: Number(executeAfterDays), nalewka_id: liqueurId }])
+          .insert([
+            {
+              note: note.trim(),
+              execute_after_days: Number(executeAfterDays),
+              nalewka_id: liqueurId
+            }
+          ])
           .select('id')
           .single();
         if (error) throw error;
         etapId = data.id;
         route.params.stage = { id: etapId, note, execute_after_days: Number(executeAfterDays) };
       }
+
       const { data: newIngr, error } = await supabase
         .from('skladniki')
-        .insert([{
-          name: newIngredientName.trim(),
-          amount: newIngredientAmount.trim(),
-          nalewka_id: liqueurId,
-          etap_id: etapId
-        }])
+        .insert([
+          {
+            name: newIngredientName.trim(),
+            amount: newIngredientAmount.trim(),
+            nalewka_id: liqueurId,
+            etap_id: etapId
+          }
+        ])
         .select('*')
         .single();
       if (error) throw error;
-      setIngredients(prev => [...prev, newIngr]);
-      setSelectedIngredients(prev => [...prev, newIngr.id]);
+
+      setIngredients((prev) => [...prev, newIngr]);
+      setSelectedIngredients((prev) => [...prev, newIngr.id]);
       setNewIngredientName('');
       setNewIngredientAmount('');
       setAddingNewIngredient(false);
@@ -137,7 +145,9 @@ export default function AddStageScreen({ route, navigation }) {
       } else {
         const { data, error } = await supabase
           .from('etapy')
-          .insert([{ note: note.trim(), execute_after_days: days, nalewka_id: liqueurId }])
+          .insert([
+            { note: note.trim(), execute_after_days: days, nalewka_id: liqueurId }
+          ])
           .select('id')
           .single();
         if (error) throw error;
@@ -167,16 +177,15 @@ export default function AddStageScreen({ route, navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.safeContainer}>
+    <SafeAreaView style={[styles.safeContainer, { backgroundColor: '#2e1d14' }]}>      
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : StatusBar.currentHeight + 10}
+        behavior="padding"
+        keyboardVerticalOffset={80}
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
-            ref={scrollRef}
-            contentContainerStyle={styles.container}
+            contentContainerStyle={[styles.container, { flexGrow: 1 }]}
             keyboardShouldPersistTaps="handled"
           >
             <Text style={styles.title}>
@@ -191,7 +200,6 @@ export default function AddStageScreen({ route, navigation }) {
               multiline
               value={note}
               onChangeText={setNote}
-              onFocus={() => onInputFocus(100)}
             />
 
             <Text style={styles.label}>Wykonaj po ilu dniach:</Text>
@@ -202,12 +210,11 @@ export default function AddStageScreen({ route, navigation }) {
               keyboardType="numeric"
               value={executeAfterDays}
               onChangeText={setExecuteAfterDays}
-              onFocus={() => onInputFocus(150)}
             />
 
             <Text style={styles.label}>Wybierz składniki do etapu:</Text>
             <View style={styles.checkboxContainer}>
-              {ingredients.map(i => (
+              {ingredients.map((i) => (
                 <CustomCheckbox
                   key={i.id}
                   label={`${i.name} — ${i.amount}`}
@@ -234,7 +241,6 @@ export default function AddStageScreen({ route, navigation }) {
                   placeholderTextColor="#bba68f"
                   value={newIngredientName}
                   onChangeText={setNewIngredientName}
-                  onFocus={() => onInputFocus(300)}
                 />
                 <TextInput
                   style={styles.input}
@@ -242,7 +248,6 @@ export default function AddStageScreen({ route, navigation }) {
                   placeholderTextColor="#bba68f"
                   value={newIngredientAmount}
                   onChangeText={setNewIngredientAmount}
-                  onFocus={() => onInputFocus(350)}
                 />
                 <TouchableOpacity
                   style={[styles.addIngredientButton, addingIngredientLoading && { opacity: 0.6 }]}
@@ -272,18 +277,18 @@ export default function AddStageScreen({ route, navigation }) {
   );
 }
 
-const createStyles = width => {
-  const norm = sz => normalize(sz, width);
+const createStyles = (width) => {
+  const norm = (sz) => normalize(sz, width);
   return StyleSheet.create({
     safeContainer: {
       flex: 1,
-      backgroundColor: '#2e1d14',
       paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0
     },
     container: {
-      padding: norm(20),
+      padding: norm(20)
     },
     title: {
+      marginTop: norm(20),
       fontSize: norm(22),
       fontWeight: 'bold',
       color: '#f5e6c4',

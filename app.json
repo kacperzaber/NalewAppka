@@ -5,19 +5,14 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./icon.png",
-    "type" : "module",
     "scheme": "nalewappka",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
         "UIViewControllerBasedStatusBarAppearance": false,
         "ITSAppUsesNonExemptEncryption": false
-      },
-      "statusBar": {
-        "backgroundColor": "#2e1d14",
-        "barStyle": "light-content"
       },
       "bundleIdentifier": "com.zkacper.NalewAppka"
     },
@@ -43,7 +38,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#2e1d14"
         }
-      ]
+      ],
+      "expo-router"
     ],
     "experiments": {
       "typedRoutes": true

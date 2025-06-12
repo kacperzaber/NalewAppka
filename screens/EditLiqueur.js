@@ -39,6 +39,9 @@ export default function EditLiqueur({ route, navigation }) {
   const norm = (sz) => normalize(sz, width);
 
   const { liqueur } = route.params;
+  // Zapisujemy poprzedni status, by przekazać do HomeScreen przy update/delete
+  const prevStatus = liqueur.status;
+
   const parseDate = (ds) => {
     if (!ds) return null;
     const d = new Date(ds);
@@ -57,8 +60,12 @@ export default function EditLiqueur({ route, navigation }) {
       .from('etapy')
       .select('*')
       .eq('nalewka_id', liqueur.id)
-      .then(({ data, error }) => !error && setStages(data));
-  }, []);
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setStages(data);
+        }
+      });
+  }, [liqueur.id]);
 
   const onDateChange = (e, d) => {
     if (Platform.OS === 'ios') {
@@ -96,75 +103,110 @@ export default function EditLiqueur({ route, navigation }) {
     if (!name.trim()) return Alert.alert('Uwaga', 'Nazwa nie może być pusta');
     setLoading(true);
 
-    const { error } = await supabase
+    // 1. Aktualizacja nalewki w supabase, pobranie zwróconego obiektu updatedItem
+    const updates = {
+      name: name.trim(),
+      created_at: date ? date.toISOString() : null,
+    };
+    const { data: updatedItem, error } = await supabase
       .from('nalewki')
-      .update({ name: name.trim(), created_at: date ? date.toISOString() : null })
-      .eq('id', liqueur.id);
+      .update(updates)
+      .eq('id', liqueur.id)
+      .select()
+      .single();
 
     if (error) {
       setLoading(false);
       return Alert.alert('Błąd', error.message);
     }
 
+    // 2. Obsługa powiadomień dla etapów, jeśli jest data
     if (date) {
-      const userId = (await supabase.auth.getUser()).data.user?.id;
-      const { data: userData } = await supabase
-        .from('users')
-        .select('notification_hours')
-        .eq('id', userId)
-        .single();
+      // Pobierz userId
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const userId = user?.id;
+      if (userId) {
+        const { data: userData, error: userDataErr } = await supabase
+          .from('users')
+          .select('notification_hours')
+          .eq('id', userId)
+          .single();
+        let notificationHour = '15:00';
+        if (!userDataErr && userData?.notification_hours) {
+          notificationHour = userData.notification_hours;
+        }
+        const [hourStr = '0', minuteStr = '0'] = notificationHour.split(':');
+        const hour = parseInt(hourStr, 10);
+        const minute = parseInt(minuteStr, 10);
+        const now = Date.now();
 
-      const notificationHour = userData?.notification_hours ?? '15:00';
-      const [hourStr = '0', minuteStr = '0'] = notificationHour.split(':');
-      const hour = parseInt(hourStr, 10);
-      const minute = parseInt(minuteStr, 10);
-      const now = Date.now();
-
-      const hasPermission = await requestPermission();
-      if (!hasPermission) {
-        console.warn('Brak uprawnień na powiadomienia');
-      }
-
-      for (const s of stages) {
-        const stageDate = new Date(date);
-        stageDate.setDate(stageDate.getDate() + (s.execute_after_days || 0));
-        stageDate.setHours(0, 0, 0, 0);
-
-        if (s.notification_id) {
-          try {
-            await Notifications.cancelScheduledNotificationAsync(s.notification_id);
-          } catch (err) {
-            console.warn(`Nie udało się anulować starego powiadomienia etapu ${s.id}`, err);
-          }
+        const hasPermission = await requestPermission();
+        if (!hasPermission) {
+          console.warn('Brak uprawnień na powiadomienia');
         }
 
-        const { error: updateError } = await supabase
-          .from('etapy')
-          .update({ date: stageDate.toISOString() })
-          .eq('id', s.id);
+        for (const s of stages) {
+          // Oblicz datę etapu
+          const stageDate = new Date(date);
+          stageDate.setDate(stageDate.getDate() + (s.execute_after_days || 0));
+          stageDate.setHours(0, 0, 0, 0);
 
-        if (updateError) continue;
+          // Anuluj stare powiadomienie, jeśli istnieje
+          if (s.notification_id) {
+            try {
+              await Notifications.cancelScheduledNotificationAsync(s.notification_id);
+            } catch (err) {
+              console.warn(`Nie udało się anulować starego powiadomienia etapu ${s.id}`, err);
+            }
+          }
 
-        const notifDate = new Date(stageDate);
-        notifDate.setHours(hour, minute, 0, 0);
+          // Zaktualizuj w supabase pole date (jeśli masz taką kolumnę)
+          const { error: updateError } = await supabase
+            .from('etapy')
+            .update({ date: stageDate.toISOString() })
+            .eq('id', s.id);
+          if (updateError) {
+            console.warn('Błąd aktualizacji daty etapu w supabase:', updateError);
+            continue;
+          }
 
-        if (hasPermission && notifDate.getTime() >= now) {
-          const notificationId = await Notifications.scheduleNotificationAsync({
-            content: {
-              title: 'Przypomnienie',
-              body: `Etap "${s.note}" zaplanowany na ${notifDate.toLocaleDateString('pl-PL')}`,
-              data: { stageId: s.id },
-            },
-            trigger: { type: 'date', date: notifDate },
-          });
+          // Zaplanuj nowe powiadomienie, jeśli w przyszłości
+          const notifDate = new Date(stageDate);
+          notifDate.setHours(hour, minute, 0, 0);
 
-          await supabase.from('etapy').update({ notification_id: notificationId }).eq('id', s.id);
+          if (hasPermission && notifDate.getTime() >= now) {
+            try {
+              const notificationId = await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: 'Przypomnienie',
+                  body: `Etap "${s.note}" zaplanowany na ${notifDate.toLocaleDateString('pl-PL')}`,
+                  data: { stageId: s.id },
+                },
+                trigger: { type: 'date', date: notifDate },
+              });
+              // Zapisz notification_id w supabase
+              await supabase
+                .from('etapy')
+                .update({ notification_id: notificationId })
+                .eq('id', s.id);
+            } catch (err) {
+              console.warn(`Błąd harmonogramowania powiadomienia etapu ${s.id}`, err);
+            }
+          }
         }
       }
     }
 
     setLoading(false);
-    navigation.goBack();
+
+    // 3. Nawigacja do HomeScreen z prawidłowymi parametrami:
+    navigation.navigate('Home', {
+      action: 'update',
+      item: updatedItem,
+      prevStatus: prevStatus,
+    });
   };
 
   const onDelete = () => {
@@ -177,25 +219,35 @@ export default function EditLiqueur({ route, navigation }) {
           text: 'Usuń',
           style: 'destructive',
           onPress: async () => {
+            setLoading(true);
             try {
-              await Promise.all(
-                stages.map(async (s) => {
-                  if (s.notification_id) {
-                    try {
-                      await Notifications.cancelScheduledNotificationAsync(s.notification_id);
-                    } catch (err) {
-                      console.warn(`Nie udało się anulować powiadomienia etapu ${s.id}:`, err);
-                    }
+              // Anuluj powiadomienia etapów
+              for (const s of stages) {
+                if (s.notification_id) {
+                  try {
+                    await Notifications.cancelScheduledNotificationAsync(s.notification_id);
+                  } catch (err) {
+                    console.warn(`Nie udało się anulować powiadomienia etapu ${s.id}:`, err);
                   }
-                })
-              );
-
+                }
+              }
+              // Usuń składniki i etapy w supabase
               await supabase.from('skladniki').delete().eq('nalewka_id', liqueur.id);
               await supabase.from('etapy').delete().eq('nalewka_id', liqueur.id);
-              await supabase.from('nalewki').delete().eq('id', liqueur.id);
-              navigation.goBack();
+              const { error } = await supabase.from('nalewki').delete().eq('id', liqueur.id);
+              if (error) {
+                throw error;
+              }
+              setLoading(false);
+              // Nawigacja do Home z akcją delete:
+              navigation.navigate('Home', {
+                action: 'delete',
+                itemId: liqueur.id,
+                prevStatus: prevStatus,
+              });
             } catch (e) {
-              Alert.alert('Błąd', e.message);
+              setLoading(false);
+              Alert.alert('Błąd', e.message || 'Wystąpił błąd podczas usuwania');
             }
           },
         },
@@ -264,11 +316,19 @@ export default function EditLiqueur({ route, navigation }) {
           <Text style={styles.actionTxt}>Zarządzaj etapami</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.saveBtn, loading && styles.disabled]} onPress={onSave}>
+        <TouchableOpacity
+          style={[styles.saveBtn, loading && styles.disabled]}
+          onPress={onSave}
+          disabled={loading}
+        >
           <Text style={styles.saveTxt}>{loading ? 'Zapisywanie...' : 'Zapisz zmiany'}</Text>
         </TouchableOpacity>
       </ScrollView>
-      <TouchableOpacity style={styles.deleteBtn} onPress={onDelete}>
+      <TouchableOpacity
+        style={[styles.deleteBtn, loading && styles.disabled]}
+        onPress={onDelete}
+        disabled={loading}
+      >
         <Text style={styles.deleteTxt}>Usuń nalewkę</Text>
       </TouchableOpacity>
     </SafeAreaView>

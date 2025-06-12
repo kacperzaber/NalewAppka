@@ -63,7 +63,7 @@ export default function AddLiqueurScreen() {
       } else {
         console.log('Dodano nalewkę:', data);
         Alert.alert('Sukces', 'Nalewka została dodana!');
-        navigation.goBack();
+         navigation.navigate('Home', { action: 'add', item: data.id });
       }
     } catch (e) {
       console.log('Błąd w onSave:', e);

@@ -505,11 +505,12 @@ const confirmStartDate = async () => {
                   }
                 })
               );
-
+console.log('nalewka_id', liqueur.id)
               await supabase.from('skladniki').delete().eq('nalewka_id', liqueur.id);
               await supabase.from('etapy').delete().eq('nalewka_id', liqueur.id);
               await supabase.from('nalewki').delete().eq('id', liqueur.id);
-              navigation.goBack();
+               navigation.navigate('Home', { action: 'update', item: updatedItem, prevStatus });
+
             } catch (e) {
               Alert.alert('Błąd', e.message);
             }
@@ -1183,7 +1184,6 @@ safeContainer: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      color: 'black',
       marginTop: norm(10),
       marginBottom: norm(16),
     },
