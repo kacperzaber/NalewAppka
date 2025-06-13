@@ -16,6 +16,7 @@ import {
   Pressable,
   RefreshControl,
   SafeAreaView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -29,22 +30,67 @@ import { supabase } from '../lib/supabase';
 const getIconSourceByName = (name) => {
   if (!name) return require('../assets/liqueur-icons/default.png');
   const lower = name.toLowerCase();
-  if (lower.includes('cytryn')) return require('../assets/liqueur-icons/lemon.png');
-  if (lower.includes('wiśni') || lower.includes('wisni')) return require('../assets/liqueur-icons/cherry.png');
-  if (lower.includes('śliw') || lower.includes('sliw')) return require('../assets/liqueur-icons/plum.png');
-  if (lower.includes('malin')) return require('../assets/liqueur-icons/rasberry.png');
-  if (lower.includes('pigw')) return require('../assets/liqueur-icons/quince.png');
-  if (lower.includes('trusk')) return require('../assets/liqueur-icons/strawberry.png');
-  if (lower.includes('grusz')) return require('../assets/liqueur-icons/pear.png');
-  if (lower.includes('jab')) return require('../assets/liqueur-icons/apple.png');
-  if (lower.includes('agres')) return require('../assets/liqueur-icons/gooseberry.png');
-  if (lower.includes('czarn')) return require('../assets/liqueur-icons/plant.png');
-  if (lower.includes('porzecz')) return require('../assets/liqueur-icons/blackcurrant.png');
-  if (lower.includes('aron')) return require('../assets/liqueur-icons/chokeberry.png');
-  if (lower.includes('mirabel')) return require('../assets/liqueur-icons/gandaria.png');
+   if (lower.includes('trusk') && lower.includes('hibis')) {
+  return require('../assets/liqueur-icons/truskawka_hibiskus.png');
+}if (lower.includes('trusk') && lower.includes('limon')) {
+  return require('../assets/liqueur-icons/truskawka_limonka.png');
+}
+ if (lower.includes('malin') && lower.includes('jeżyna')) {
+  return require('../assets/liqueur-icons/malina_jezyna.png');
+}
+if (lower.includes('śliw') && lower.includes('korzen')) {
+  return require('../assets/liqueur-icons/sliwka_korzenna.png');
+}
+if (lower.includes('pigw') && lower.includes('śliw')) {
+  return require('../assets/liqueur-icons/pigwa_sliwka.png');
+}if (lower.includes('cytryn') && lower.includes('imbir')&& lower.includes('mi')) {
+  return require('../assets/liqueur-icons/cytryna_miod_imbir.png');
+}
+
+  if (lower.includes('cytryn')) return require('../assets/liqueur-icons/cytryna.png');
+  if (lower.includes('wiśni') || lower.includes('wisni')) return require('../assets/liqueur-icons/wisnia.png');
+  if (lower.includes('śliw') || lower.includes('sliw')) return require('../assets/liqueur-icons/sliwka.png');
+  if (lower.includes('malin')) return require('../assets/liqueur-icons/malina.png');
+  if (lower.includes('pigw')) return require('../assets/liqueur-icons/pigwa.png');
+  if (lower.includes('trusk')) return require('../assets/liqueur-icons/truskawka.png');
+  if (lower.includes('grusz')) return require('../assets/liqueur-icons/gruszka.png');
+  if (lower.includes('jab')) return require('../assets/liqueur-icons/jablko.png');
+  if (lower.includes('agres')) return require('../assets/liqueur-icons/agrest.png');
+  if (lower.includes('bez')) return require('../assets/liqueur-icons/czarny_bez.png');
+  if (lower.includes('porzecz')) return require('../assets/liqueur-icons/czarna_porzeczka.png');
+  if (lower.includes('aron')) return require('../assets/liqueur-icons/aronia.png');
+  if (lower.includes('mirabel')) return require('../assets/liqueur-icons/mirabelka.png');
   if (lower.includes('deren')) return require('../assets/liqueur-icons/deren.png');
   if (lower.includes('porter')) return require('../assets/liqueur-icons/porter.png');
-  return require('../assets/liqueur-icons/default.png');
+  if (lower.includes('pomar')) return require('../assets/liqueur-icons/pomarancz.png');
+  if (lower.includes('kaw')) return require('../assets/liqueur-icons/kawa.png');
+  if (lower.includes('mięt')) return require('../assets/liqueur-icons/mieta.png');
+  if (lower.includes('ananas')) return require('../assets/liqueur-icons/ananas.png');
+  if (lower.includes('banan')) return require('../assets/liqueur-icons/banan.png');
+  if (lower.includes('bazyli')) return require('../assets/liqueur-icons/bazyli.png');
+  if (lower.includes('borów')) return require('../assets/liqueur-icons/borowka.png');
+  if (lower.includes('czereś')) return require('../assets/liqueur-icons/czeresnia.png');
+  if (lower.includes('czeremch')) return require('../assets/liqueur-icons/czermcha.png');
+  if (lower.includes('dzika')) return require('../assets/liqueur-icons/dzika_roza.png');
+  if (lower.includes('grejfr')) return require('../assets/liqueur-icons/grejfrut.png');
+  if (lower.includes('imbir')) return require('../assets/liqueur-icons/imbir.png');
+    if (lower.includes('jarz')) return require('../assets/liqueur-icons/jarzebina.png');
+      if (lower.includes('jeżyna')) return require('../assets/liqueur-icons/jezyna.png');
+      if (lower.includes('tarnina')) return require('../assets/liqueur-icons/tarnina.png');
+      if (lower.includes('laskowy')) return require('../assets/liqueur-icons/laskowy.png');
+      if (lower.includes('mango')) return require('../assets/liqueur-icons/mango.png');
+      if (lower.includes('migda')) return require('../assets/liqueur-icons/migdal.png');
+      if (lower.includes('miód')) return require('../assets/liqueur-icons/miod.png');
+      if (lower.includes('miod')) return require('../assets/liqueur-icons/miod.png');
+      if (lower.includes('morel')) return require('../assets/liqueur-icons/morela.png');
+      if (lower.includes('oregano')) return require('../assets/liqueur-icons/oregano.png');
+      if (lower.includes('orzech')) return require('../assets/liqueur-icons/orzech.png');
+      if (lower.includes('rokitni')) return require('../assets/liqueur-icons/rokitnik.png');
+      if (lower.includes('szał')) return require('../assets/liqueur-icons/szalwia.png');
+      if (lower.includes('winogrono')) return require('../assets/liqueur-icons/winogrono.png');
+      if (lower.includes('urawina')) return require('../assets/liqueur-icons/zurawina.png');
+      if (lower.includes('bazylia')) return require('../assets/liqueur-icons/bazylia.png');
+      return require('../assets/liqueur-icons/default.png');
 };
 function normalize(size, screenWidth) {
   const scale = screenWidth / 375;
@@ -1164,7 +1210,7 @@ export const createStyles = (width) => {
   newTile:{ backgroundColor:'#424242', opacity:0.7 },
   archivedTile:{ backgroundColor:'#424242', opacity:0.8 },
 
-  liqueurIcon:{ width:70, height:70, marginBottom:10 },
+  liqueurIcon:{ width:100, height:100, marginBottom:10 },
   itemText:{ color:'#f5e6c4', fontSize:16, fontWeight:'700', marginBottom:10, textAlign:'center' },
 
   sharedByText:{ color:'#fff', fontSize:12, fontStyle:'italic', marginBottom:8, textAlign:'center' },
