@@ -1,26 +1,26 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    FlatList,
-    Image,
-    ImageBackground,
-    Modal,
-    PixelRatio,
-    Platform,
-    Pressable,
-    SafeAreaView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    useWindowDimensions,
-    View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  FlatList,
+  Image,
+  ImageBackground,
+  Modal,
+  PixelRatio,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
+  View
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 
@@ -58,7 +58,9 @@ export default function HomeScreen() {
   const norm = (sz) => normalize(sz, width);
   
   const { width: windowWidth } = useWindowDimensions();
+  const [ready, setReady] = useState(false);
   const navigation = useNavigation();
+  const route = useRoute();
   const alertShown = useRef(false);
   const [todayModalVisible, setTodayModalVisible] = useState(false);
   const [todaysStagesList, setTodaysStagesList] = useState([]);
@@ -72,17 +74,17 @@ export default function HomeScreen() {
   const [modalDate, setModalDate] = useState('');
   const [recipesList, setRecipesList] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortOrder, setSortOrder] = useState('asc');  // 'asc' lub 'desc'
-  const [loadingFilter, setLoadingFilter] = useState(false);
-  const [filteredLiqueurs, setFilteredLiqueurs] = useState([]);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const [pastStagesByLiqueur, setPastStagesByLiqueur] = useState({});
+const [sortOrder, setSortOrder] = useState('asc');  // 'asc' lub 'desc'
+const [loadingFilter, setLoadingFilter] = useState(false);
+const [filteredLiqueurs, setFilteredLiqueurs] = useState([]);
+const fadeAnim = useRef(new Animated.Value(0)).current;
+const [pastStagesByLiqueur, setPastStagesByLiqueur] = useState({});
 // Czy użytkownik już dziś zamknął/pominął modal “Etapy na dziś”?
-  const [modalDismissed, setModalDismissed] = useState(false);
+const [modalDismissed, setModalDismissed] = useState(false);
 // Data ostatniego dnia, dla którego modal był wyświetlany / sprawdzany, format 'YYYY-MM-DD'
-  const [lastModalDate, setLastModalDate] = useState(null);
-  const [lastCheckDate, setLastCheckDate] = useState(null);
-  const [liqueursAll, setLiqueursAll] = useState([]);
+const [lastModalDate, setLastModalDate] = useState(null);
+const [lastCheckDate, setLastCheckDate] = useState(null);
+const [liqueursAll, setLiqueursAll] = useState([]);
 
 
 const processStages = useCallback((liqueursData) => {
@@ -276,22 +278,42 @@ const fetchActiveData = useCallback(async () => {
 useFocusEffect(
   useCallback(() => {
     if (!userId) return;
-    setLoadingFilter(true);           // ← włącz loader raz przy przełączeniu
-    setFilteredLiqueurs([]);          // ← i oczyść starą listę
+    if (!needsRefresh) {
+      // nic nie rób - zachowaj aktualne filteredLiqueurs i scroll
+      return;
+    }
+    setLoadingFilter(true);
+    // NIE czyścimy filteredLiqueurs natychmiast, żeby FlatList nie resetował scrolla
     switch (activeTab) {
       case 'archive':
-        fetchArchivedData().finally(()=>setLoadingFilter(false));
+        fetchArchivedData().finally(() => {
+          setLoadingFilter(false);
+          setNeedsRefresh(false);
+        });
         break;
       case 'recipes':
-        fetchRecipes().finally(()=>setLoadingFilter(false));
+        fetchRecipes().finally(() => {
+          setLoadingFilter(false);
+          setNeedsRefresh(false);
+        });
         break;
       default:
-        fetchAllData().finally(()=>setLoadingFilter(false));
+        fetchAllData().finally(() => {
+          setLoadingFilter(false);
+          setNeedsRefresh(false);
+        });
         break;
     }
-  }, [userId, activeTab])
+  }, [userId, activeTab, needsRefresh])
 );
-// normalize + kafelki
+
+
+
+
+
+
+
+  // normalize + kafelki
   const numColumns = windowWidth < 360 ? 1 : 2;
   const tileMargin = 12;
   const containerPadding = 40;
@@ -305,27 +327,12 @@ useFocusEffect(
     recipes: 'Moje przepisy', 
   };
 
-  const onChangeTab = useCallback((tab) => {
-  if (tab === activeTab) return; // opcjonalnie: jeśli to ta sama zakładka, nic nie rób
-  setActiveTab(tab);
-  setLoadingFilter(true);
-  switch (tab) {
-    case 'archive':
-      fetchArchivedData().finally(() => setLoadingFilter(false));
-      break;
-    case 'recipes':
-      fetchRecipes().finally(() => setLoadingFilter(false));
-      break;
-    default:
-      // Jeśli fetchAllData powinno uwzględniać activeTab, można przekazać parametr:
-      fetchAllData(tab).finally(() => setLoadingFilter(false));
-      break;
-  }
-}, [activeTab]); // dodajemy activeTab do zależności
-
+  const onChangeTab = useCallback((tabKey) => {
+  setActiveTab(tabKey);
+  setFilteredLiqueurs([]);    // ⬅ czyścimy aktualną listę
+}, []);
 
 useEffect(() => {
-
   const timer = setTimeout(() => {
     // 1. Wybieramy bazę zgodnie z activeTab
     const base = activeTab === 'archive'

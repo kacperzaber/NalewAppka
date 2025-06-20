@@ -31,6 +31,8 @@ export default function AddStageScreen({ route, navigation }) {
   const styles = useMemo(() => createStyles(width), [width]);
 
   const [note, setNote] = useState(stage?.note || '');
+  const [description, setDescription] = useState(stage?.description || '');
+
   const [executeAfterDays, setExecuteAfterDays] = useState(
     stage?.execute_after_days?.toString() || ''
   );
@@ -87,7 +89,8 @@ export default function AddStageScreen({ route, navigation }) {
             {
               note: note.trim(),
               execute_after_days: Number(executeAfterDays),
-              nalewka_id: liqueurId
+              nalewka_id: liqueurId,
+              description: description.trim()
             }
           ])
           .select('id')
@@ -125,7 +128,7 @@ export default function AddStageScreen({ route, navigation }) {
 
   const onSave = async () => {
     if (!note.trim()) {
-      Alert.alert('Błąd', 'Opis etapu nie może być pusty!');
+      Alert.alert('Błąd', 'Nazwa etapu nie może być pusta!');
       return;
     }
     const days = Number(executeAfterDays);
@@ -139,14 +142,14 @@ export default function AddStageScreen({ route, navigation }) {
       if (isEditing) {
         const { error } = await supabase
           .from('etapy')
-          .update({ note: note.trim(), execute_after_days: days })
+          .update({ note: note.trim(), execute_after_days: days,description: description.trim() })
           .eq('id', etapId);
         if (error) throw error;
       } else {
         const { data, error } = await supabase
           .from('etapy')
           .insert([
-            { note: note.trim(), execute_after_days: days, nalewka_id: liqueurId }
+            { note: note.trim(), execute_after_days: days, nalewka_id: liqueurId, description: description.trim()}
           ])
           .select('id')
           .single();
@@ -181,7 +184,7 @@ export default function AddStageScreen({ route, navigation }) {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior="padding"
-        keyboardVerticalOffset={80}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 50}
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
@@ -192,15 +195,25 @@ export default function AddStageScreen({ route, navigation }) {
               {isEditing ? 'Edytowanie etapu' : 'Dodanie etapu'}
             </Text>
 
-            <Text style={styles.label}>Opis etapu:</Text>
+            <Text style={styles.label}>Nazwa etapu:</Text>
             <TextInput
               style={styles.input}
-              placeholder="Wpisz opis etapu"
+              placeholder="Wpisz etap"
               placeholderTextColor="#bba68f"
-              multiline
               value={note}
+               returnKeyType="done"
               onChangeText={setNote}
             />
+            <Text style={styles.label}>Opis etapu (opcjonalny):</Text>
+<TextInput
+  style={styles.input}
+  placeholder="Wpisz opis etapu"
+  placeholderTextColor="#bba68f"
+  multiline
+  value={description}
+  onChangeText={setDescription}
+/>
+
 
             <Text style={styles.label}>Wykonaj po ilu dniach:</Text>
             <TextInput
@@ -285,7 +298,8 @@ const createStyles = (width) => {
       paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0
     },
     container: {
-      padding: norm(20)
+      padding: norm(20),
+      minHeight: '100%'
     },
     title: {
       marginTop: norm(20),
@@ -300,7 +314,7 @@ const createStyles = (width) => {
       color: '#bba68f',
       fontSize: norm(16),
       marginBottom: norm(6),
-      marginTop: norm(10),
+      marginTop: norm(4),
       fontWeight: '600'
     },
     input: {

@@ -46,6 +46,9 @@ if (lower.includes('pigw') && lower.includes('śliw')) {
 }if (lower.includes('cytryn') && lower.includes('imbir')&& lower.includes('mi')) {
   return require('../assets/liqueur-icons/cytryna_miod_imbir.png');
 }
+if (lower.includes('kwia') && lower.includes('czarn')) {
+  return require('../assets/liqueur-icons/kwiat_bzu.png');
+}
 
   if (lower.includes('cytryn')) return require('../assets/liqueur-icons/cytryna.png');
   if (lower.includes('wiśni') || lower.includes('wisni')) return require('../assets/liqueur-icons/wisnia.png');
@@ -90,6 +93,7 @@ if (lower.includes('pigw') && lower.includes('śliw')) {
       if (lower.includes('winogrono')) return require('../assets/liqueur-icons/winogrono.png');
       if (lower.includes('urawina')) return require('../assets/liqueur-icons/zurawina.png');
       if (lower.includes('bazylia')) return require('../assets/liqueur-icons/bazylia.png');
+        if (lower.includes('chmiel')) return require('../assets/liqueur-icons/chmiel.png');
       return require('../assets/liqueur-icons/default.png');
 };
 function normalize(size, screenWidth) {
@@ -143,6 +147,7 @@ export default function HomeScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [modalNote, setModalNote] = useState('');
   const [modalDate, setModalDate] = useState('');
+  const [modalDesc, setModalDesc] = useState('');
 
   // Mapy etapów tylko dla aktywnych:
   const [nextStagesByLiqueur, setNextStagesByLiqueur] = useState({});
@@ -195,7 +200,7 @@ export default function HomeScreen() {
         .from('nalewki')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', userId)
-        .in('status', ['active','new','waiting']);
+        .eq('status', 'active');
       // New: status === 'new'
       const newQ = supabase
         .from('nalewki')
@@ -417,7 +422,7 @@ export default function HomeScreen() {
     // Fetch etapów tylko dla aktywnych nalewak
     supabase
       .from('etapy')
-      .select('nalewka_id, note, execute_after_days, id, is_done, skip_notif')
+      .select('nalewka_id, note, execute_after_days, id, is_done, skip_notif, description')
       .in('nalewka_id', liqueursData.map(l => l.id))
       .then(({ data: stagesData, error }) => {
         if (error) {
@@ -441,6 +446,7 @@ export default function HomeScreen() {
               nextMap[lid] = {
                 date: dateStr,
                 note: stage.note,
+                description: stage.description,
                 is_done: stage.is_done,
                 etap_id: stage.id,
                 skip_notif: stage.skip_notif,
@@ -756,12 +762,11 @@ export default function HomeScreen() {
             <>
               <View style={styles.dateInfoContainer}>
                 <View style={styles.dateRow}>
-                  <Ionicons name="flag-outline" size={16} color="#bba68f" style={styles.icon}/>
+                  <Ionicons name="flag-outline" size={12} color="#bba68f" style={styles.icon}/>
                   <Text style={styles.dateValue}>{formatDate(item.created_at)}</Text>
                 </View>
                 { next && daysLeft != null ? (
                   <View style={styles.nextStageRow}>
-                    <Ionicons name="time-outline" size={16} color="#e1c699"/>
                     <Text style={styles.nextStageText}>
                       Etap: {daysLeft === 0 ? 'dzisiaj' : `za ${daysLeft} dni`}
                     </Text>
@@ -769,6 +774,7 @@ export default function HomeScreen() {
                       <TouchableOpacity onPress={() => {
                         setModalDate(formatDate(next.date));
                         setModalNote(next.note);
+                        setModalDesc(next.description);
                         setModalVisible(true);
                       }}>
                         <Ionicons name="information-circle-outline" size={20} color="#e1c699" style={{ marginLeft: 1 }}/>
@@ -1078,6 +1084,13 @@ export default function HomeScreen() {
               <Text style={[styles.modalNote, { color: '#5a4a3c', fontSize: 16, marginBottom: 20 }]}>
                 {modalNote}
               </Text>
+            <Text style={{ fontSize: 14, color: '#3b2a1f', fontWeight: 'bold', marginBottom: 4 }}>
+  Opis:
+</Text>
+<Text style={[styles.modalNote, { color: '#5a4a3c', fontSize: 16, marginBottom: 20 }]}>
+  {modalDesc?.trim() || 'Brak opisu do etapu'}
+</Text>
+
               <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
                 <Pressable
                   style={[styles.modalButton, { backgroundColor: '#8d6943' }]}
@@ -1195,7 +1208,12 @@ export const createStyles = (width) => {
     justifyContent:'center', alignItems:'center', paddingHorizontal:2,
   },
   badgeCountText:{ color:'#fff', fontSize:10, fontWeight:'600' },
-
+opisLabel: {
+  fontSize: 14,
+  color: '#3b2a1f',
+  fontWeight: 'bold',
+  marginBottom: 4
+},
   list:{ paddingBottom:60 },
   row:{ justifyContent:'space-between', marginBottom:14 },
   noDataText:{ textAlign:'center', marginTop:40, fontSize:18, color:'#f5e6c4' },
@@ -1231,8 +1249,8 @@ export const createStyles = (width) => {
   alignItems: 'center',
 },
 
-  nextStageRow:{ flexDirection:'row', alignItems:'center', gap:6, marginTop:4 },
-  nextStageText:{ fontSize:12, color:'#e1c699' },
+  nextStageRow:{ flexDirection:'row', alignItems:'center', gap:6, marginTop:4, marginBottom: 6},
+  nextStageText:{ fontSize:12, color:'#e1c699'},
   daysText:{ color:'#e1c699', fontSize:12, position:'absolute', bottom:10, left:12},
   
   newInfoText:{ color:'#f5f1e0', fontSize:13, textAlign:'center', fontStyle:'italic', paddingHorizontal:6 },

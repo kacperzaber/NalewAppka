@@ -263,6 +263,8 @@ const resumeLiqueur = () => {
                       nalewka_id: newLiqueur.id,
                       note: s.note,
                       execute_after_days: s.execute_after_days,
+                     description: typeof s.description === 'string' ? s.description.trim() : '',
+
                     },
                   ])
                   .select()
@@ -584,6 +586,8 @@ console.log('nalewka_id', liqueur.id)
               nalewka_id: newLiqueur.id,
               note: s.note,
               execute_after_days: s.execute_after_days,
+              description: typeof s.description === 'string' ? s.description.trim() : '',
+
             },
           ])
           .select()
@@ -967,20 +971,28 @@ const toggleNotifications = async () => {
       </View>
 
       {/* Zawartość po rozwinięciu */}
-      {expanded && (
-        <View style={styles.stageContent}>
-          <Text style={styles.stageSubtitle}>Składniki:</Text>
-          {stageIngredients.length > 0 ? (
-            stageIngredients.map((ing) => (
-              <Text key={ing.id} style={styles.ingredientText}>
-                • {ing.name} – {ing.amount}
-              </Text>
-            ))
-          ) : (
-            <Text style={styles.ingredientText}>Brak składników</Text>
-          )}
-        </View>
-      )}
+     {expanded && (
+  <View style={styles.stageContent}>
+    {stage.description?.trim() ? (
+      <>
+        <Text style={styles.stageSubtitle}>Opis:</Text>
+        <Text style={styles.ingredientText}>{stage.description}</Text>
+      </>
+    ) : null}
+
+    <Text style={styles.stageSubtitle}>Składniki:</Text>
+    {stageIngredients.length > 0 ? (
+      stageIngredients.map((ing) => (
+        <Text key={ing.id} style={styles.ingredientText}>
+          • {ing.name} – {ing.amount}
+        </Text>
+      ))
+    ) : (
+      <Text style={styles.ingredientText}>Brak składników</Text>
+    )}
+  </View>
+)}
+
 
       {/* Badge z dniami */}
       <View style={styles.badgesContainer}>
